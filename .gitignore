@@ -1,0 +1,22 @@
+# Environment / secrets
+.env
+*.local.php
+
+# Vendor / dependencies (no composer packages by design)
+/vendor
+
+# Storage (logs, cache)
+/storage/logs/*
+/storage/cache/*
+!/storage/logs/.gitkeep
+!/storage/cache/.gitkeep
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# Test / scratch
+/tmp

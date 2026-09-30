@@ -1,0 +1,11 @@
+# Exclude files that must not be copied into the Docker build context.
+.git
+.env
+.gitignore
+docker-compose.yml
+storage/logs
+storage/cache
+docs
+tests
+README.md
+*.md
