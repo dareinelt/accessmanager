@@ -33,6 +33,7 @@ $router->get('/ad-mappings', 'App\Controllers\PageController@adMappings');
 $router->get('/audit', 'App\Controllers\PageController@audit');
 $router->get('/users', 'App\Controllers\PageController@users');
 $router->get('/settings', 'App\Controllers\PageController@settings');
+$router->get('/system-secrets', 'App\Controllers\PageController@systemSecrets');
 
 $router->get('/certificates', 'App\Controllers\CertificateController@index');
 $router->post('/certificates/request', 'App\Controllers\CertificateController@createRequest');
@@ -92,6 +93,12 @@ $router->delete('/api/users/{id}', 'App\Controllers\Api\UserController@delete');
 
 $router->get('/api/settings', 'App\Controllers\Api\SettingsController@show');
 $router->put('/api/settings', 'App\Controllers\Api\SettingsController@update');
+
+$router->get('/api/system-secrets', 'App\Controllers\Api\SystemSecretController@list');
+$router->post('/api/system-secrets', 'App\Controllers\Api\SystemSecretController@create');
+$router->put('/api/system-secrets/{id}', 'App\Controllers\Api\SystemSecretController@update');
+$router->delete('/api/system-secrets/{id}', 'App\Controllers\Api\SystemSecretController@delete');
+$router->post('/api/system-secrets/{id}/reveal', 'App\Controllers\Api\SystemSecretController@reveal');
 
 $router->get('/api/ad/mappings', 'App\Controllers\Api\AdMappingController@list');
 $router->post('/api/ad/mappings', 'App\Controllers\Api\AdMappingController@create');

@@ -11,9 +11,20 @@
 
 | Rolle       | Rechte                                                              |
 |-------------|---------------------------------------------------------------------|
+| `sysadmin`  | Höchste Stufe: zusätzlich Zugriff auf Systemgeheimnisse              |
 | `admin`     | Vollzugriff inkl. Standorte, Audit, Benutzer, Einstellungen          |
 | `operator`  | Personen/Karten/Gruppen/Türen verwalten, Synchronisation ausführen   |
 | `readonly`  | Nur Lesen                                                           |
+
+## Systemgeheimnisse
+
+Vertrauliche Systemdaten (Active-Directory-Daten, DNs, API-Endpunkte der
+UniFi-Geräte u. ä.) werden in der Tabelle `system_secrets` abgelegt. Der
+Wert liegt dort ausschließlich mit AES-256-GCM verschlüsselt vor
+(`value_enc`). Lesender und schreibender Zugriff ist auf die Rolle
+`sysadmin` beschränkt (`SystemSecretController` prüft `Auth::ROLE_SYSADMIN`);
+das Anzeigen eines Wertes (`reveal`) sowie jede Änderung wird im Audit-Log
+protokolliert.
 
 Alle mutierenden API-Routen prüfen die Rolle (`ApiController::authorize()`)
 und CSRF (`ApiController::requireCsrf()`). Webseiten prüfen über

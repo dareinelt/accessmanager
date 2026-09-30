@@ -12,6 +12,7 @@ use App\Repositories\CatalogRepository;
 use App\Repositories\ConnectionRepository;
 use App\Repositories\SettingsRepository;
 use App\Repositories\SyncLogRepository;
+use App\Repositories\SystemSecretRepository;
 use App\Repositories\TlsCertificateRepository;
 use App\Services\AccessGroupService;
 use App\Services\AdSyncService;
@@ -26,6 +27,7 @@ use App\Services\Ldap\LdapClientInterface;
 use App\Services\PersonService;
 use App\Services\SiteService;
 use App\Services\SyncService;
+use App\Services\SystemSecretService;
 use App\Services\Tls\TlsCertificateService;
 
 /**
@@ -120,6 +122,14 @@ final class App
     public static function settings(): SettingsRepository
     {
         return self::$services['settings'] ??= new SettingsRepository();
+    }
+
+    public static function systemSecrets(): SystemSecretService
+    {
+        return self::$services['system_secrets'] ??= new SystemSecretService(
+            new SystemSecretRepository(),
+            self::audit(),
+        );
     }
 
     public static function auditRepository(): AuditRepository

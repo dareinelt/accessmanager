@@ -68,6 +68,7 @@ function seed(): void
 
     // Roles
     $roles = [
+        ['sysadmin', 'Systemadministrator'],
         ['admin', 'Administrator'],
         ['operator', 'Operator'],
         ['readonly', 'Nur Lesen'],

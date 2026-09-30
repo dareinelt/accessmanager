@@ -20,7 +20,9 @@ use App\Repositories\AppUserRepository;
 use App\Repositories\CacheRepository;
 use App\Repositories\CatalogRepository;
 use App\Repositories\ConnectionRepository;
+use App\Repositories\SystemSecretRepository;
 use App\Repositories\TlsCertificateRepository;
+use App\Security\Auth;
 use App\Security\Crypto;
 use App\Security\Csrf;
 use App\Services\AdSyncService;
@@ -172,6 +174,19 @@ test('AppUserRepository legt Benutzer mit gehashtem Passwort an', function () {
     } finally {
         $repo->delete($id);
     }
+});
+
+test('Auth::hasRole respektiert die Rollenhierarchie', function () {
+    $_SESSION['user_id'] = 1;
+    $_SESSION['role'] = Auth::ROLE_SYSADMIN;
+    assertTrue(Auth::hasRole(Auth::ROLE_SYSADMIN), 'sysadmin sollte sysadmin erfüllen');
+    assertTrue(Auth::hasRole(Auth::ROLE_ADMIN), 'sysadmin sollte admin erfüllen');
+    assertTrue(Auth::hasRole(Auth::ROLE_OPERATOR), 'sysadmin sollte operator erfüllen');
+
+    $_SESSION['role'] = Auth::ROLE_READONLY;
+    assertTrue(Auth::hasRole(Auth::ROLE_READONLY), 'readonly sollte readonly erfüllen');
+    assertTrue(!Auth::hasRole(Auth::ROLE_ADMIN), 'readonly sollte admin NICHT erfüllen');
+    assertTrue(!Auth::hasRole(Auth::ROLE_SYSADMIN), 'readonly sollte sysadmin NICHT erfüllen');
 });
 
 test('AppUserRepository::findByUsername findet Benutzer über E-Mail', function () {
@@ -373,9 +388,43 @@ test('previewImport lehnt fremdes Zertifikat ab', function () {
 });
 
 // ---------------------------------------------------------------------
-// 10. AD-Integration (LDAP + Gruppen-Mapping + Sync)
+// 10. Systemgeheimnisse (verschlüsselte Systemdaten)
 // ---------------------------------------------------------------------
-echo "\n[10] AD-Integration\n";
+echo "\n[10] Systemgeheimnisse\n";
+test('SystemSecretRepository verschlüsselt Werte und liest sie zurück', function () {
+    $repo = new SystemSecretRepository();
+    $key = 'test.ad.server.' . bin2hex(random_bytes(3));
+    $id = $repo->create($key, 'Test-Server', 'ad', 'ldaps://dc.example.local');
+    try {
+        $row = $repo->find($id);
+        assertNotEmpty($row, 'Eintrag sollte gefunden werden');
+        assertTrue($row['value_enc'] !== 'ldaps://dc.example.local', 'Wert muss verschlüsselt gespeichert sein');
+        assertSame('ldaps://dc.example.local', Crypto::decrypt((string) $row['value_enc']), 'Wert sollte entschlüsselbar sein');
+    } finally {
+        $repo->delete($id);
+    }
+});
+
+test('SystemSecretService lehnt doppelte Schlüssel ab', function () {
+    $service = App::systemSecrets();
+    $key = 'test.dup.' . bin2hex(random_bytes(3));
+    $id = $service->create(['key' => $key, 'label' => 'A', 'category' => 'ad', 'value' => 'x'])['id'];
+    try {
+        try {
+            $service->create(['key' => $key, 'label' => 'B', 'category' => 'ad', 'value' => 'y']);
+            throw new RuntimeException('Doppelter Schlüssel hätte abgelehnt werden müssen');
+        } catch (InvalidArgumentException) {
+            assertTrue(true);
+        }
+    } finally {
+        $service->delete($id);
+    }
+});
+
+// ---------------------------------------------------------------------
+// 11. AD-Integration (LDAP + Gruppen-Mapping + Sync)
+// ---------------------------------------------------------------------
+echo "\n[11] AD-Integration\n";
 test('MockLdapClient liefert Benutzer und Gruppen', function () {
     $ldap = new MockLdapClient();
     $users = $ldap->getUsers();
