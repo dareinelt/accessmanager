@@ -1,5 +1,8 @@
 # Deployment
 
+> Screenshots der Oberfläche und eine bebilderte Anleitung finden Sie in der
+> [Bedienungsanleitung](user-guide.md).
+
 ## Voraussetzungen
 
 - Docker Engine mit Docker Compose (v2)

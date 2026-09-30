@@ -102,6 +102,7 @@ an das `APP_SECRET` der erzeugenden Installation gebunden.
 
 ## Dokumentation
 
+- [Bedienungsanleitung (mit Screenshots)](docs/user-guide.md)
 - [Architektur](docs/architecture.md)
 - [UniFi API](docs/unifi-api.md)
 - [Datenbank](docs/database.md)

@@ -1,5 +1,8 @@
 # Datenbank
 
+> Screenshots der Oberfläche und eine bebilderte Anleitung finden Sie in der
+> [Bedienungsanleitung](user-guide.md).
+
 Schema: `database/migrations/001_initial.sql`. Engine InnoDB, Zeichensatz
 `utf8mb4`. Die Migrationen sind idempotent (`CREATE TABLE IF NOT EXISTS`).
 
