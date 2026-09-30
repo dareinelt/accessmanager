@@ -62,8 +62,10 @@ function nav_icon(string $d): string
                 <?php endif; ?>
             <?php endforeach; ?>
         </nav>
-        <div class="sidebar-foot">
+        <div class="sidebar-credit">
             <div class="foot-credit">UnifiAccessManager<br>by Daniel-André Reinelt</div>
+        </div>
+        <div class="sidebar-foot">
             <div class="sidebar-foot-row">
                 <span class="dot dot-<?= e($role) ?>"></span>
                 <div>

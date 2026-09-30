@@ -97,8 +97,12 @@ a:hover { text-decoration: underline; }
     border-top: 1px solid rgba(255, 255, 255, .08);
     font-size: 12px;
 }
+.sidebar-credit {
+    padding: 16px 20px 12px;
+    text-align: center;
+}
 .sidebar-foot-row { display: flex; align-items: center; gap: 10px; }
-.foot-credit { color: rgba(255, 255, 255, .45); font-size: 11px; line-height: 1.4; }
+.foot-credit { color: rgba(255, 255, 255, .45); font-size: 11px; line-height: 1.4; text-align: center; }
 .foot-user { color: #fff; font-weight: 600; }
 .foot-role { color: #94a3b8; }
 .dot { width: 9px; height: 9px; border-radius: 50%; background: #64748b; }
