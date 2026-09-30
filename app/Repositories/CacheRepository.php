@@ -1,0 +1,229 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\Repositories;
+
+use App\Core\Database;
+use PDO;
+
+/**
+ * Read/write access to the local UniFi cache tables. The cache mirrors
+ * UniFi data; UniFi remains the source of truth. Every cached row stores
+ * the original UniFi ID plus a raw_json snapshot for future needs.
+ */
+final class CacheRepository
+{
+    // ------------------------------------------------------------ Users
+
+    public function upsertUser(int $connectionId, array $user): void
+    {
+        $pdo = Database::connection();
+        $sql = 'INSERT INTO unifi_users
+                    (connection_id, unifi_id, first_name, last_name, full_name, email, employee_number, status, onboard_time, access_policy_ids_json, raw_json)
+                VALUES
+                    (:c, :uid, :fn, :ln, :full, :email, :emp, :status, :onboard, :policies, :raw)
+                ON DUPLICATE KEY UPDATE
+                    first_name = VALUES(first_name), last_name = VALUES(last_name), full_name = VALUES(full_name),
+                    email = VALUES(email), employee_number = VALUES(employee_number), status = VALUES(status),
+                    onboard_time = VALUES(onboard_time), access_policy_ids_json = VALUES(access_policy_ids_json),
+                    raw_json = VALUES(raw_json), last_synced_at = CURRENT_TIMESTAMP';
+        $pdo->prepare($sql)->execute($this->userParams($connectionId, $user));
+    }
+
+    public function deleteUser(int $connectionId, string $unifiId): void
+    {
+        Database::connection()->prepare('DELETE FROM unifi_users WHERE connection_id = :c AND unifi_id = :u')
+            ->execute(['c' => $connectionId, 'u' => $unifiId]);
+    }
+
+    // ------------------------------------------------------ Credentials
+
+    public function upsertCredential(int $connectionId, array $cred): void
+    {
+        $pdo = Database::connection();
+        $sql = 'INSERT INTO unifi_credentials
+                    (connection_id, unifi_token, display_id, status, alias, card_type, user_unifi_id, raw_json)
+                VALUES
+                    (:c, :token, :display, :status, :alias, :type, :user, :raw)
+                ON DUPLICATE KEY UPDATE
+                    display_id = VALUES(display_id), status = VALUES(status), alias = VALUES(alias),
+                    card_type = VALUES(card_type), user_unifi_id = VALUES(user_unifi_id),
+                    raw_json = VALUES(raw_json), last_synced_at = CURRENT_TIMESTAMP';
+        $pdo->prepare($sql)->execute([
+            'c' => $connectionId,
+            'token' => (string) ($cred['token'] ?? ''),
+            'display' => $cred['display_id'] ?? null,
+            'status' => $cred['status'] ?? null,
+            'alias' => $cred['alias'] ?? null,
+            'type' => $cred['card_type'] ?? null,
+            'user' => $cred['user_id'] ?? null,
+            'raw' => json_encode($cred, JSON_UNESCAPED_UNICODE),
+        ]);
+    }
+
+    public function deleteCredential(int $connectionId, string $token): void
+    {
+        Database::connection()->prepare('DELETE FROM unifi_credentials WHERE connection_id = :c AND unifi_token = :t')
+            ->execute(['c' => $connectionId, 't' => $token]);
+    }
+
+    // ---------------------------------------------------- Access groups
+
+    public function upsertAccessGroup(int $connectionId, array $group): void
+    {
+        $pdo = Database::connection();
+        $sql = 'INSERT INTO unifi_access_groups
+                    (connection_id, unifi_id, name, schedule_id, resources_json, raw_json)
+                VALUES
+                    (:c, :uid, :name, :schedule, :resources, :raw)
+                ON DUPLICATE KEY UPDATE
+                    name = VALUES(name), schedule_id = VALUES(schedule_id),
+                    resources_json = VALUES(resources_json), raw_json = VALUES(raw_json),
+                    last_synced_at = CURRENT_TIMESTAMP';
+        $pdo->prepare($sql)->execute([
+            'c' => $connectionId,
+            'uid' => (string) ($group['id'] ?? ''),
+            'name' => (string) ($group['name'] ?? ''),
+            'schedule' => $group['schedule_id'] ?? null,
+            'resources' => json_encode($group['resources'] ?? [], JSON_UNESCAPED_UNICODE),
+            'raw' => json_encode($group, JSON_UNESCAPED_UNICODE),
+        ]);
+    }
+
+    public function deleteAccessGroup(int $connectionId, string $unifiId): void
+    {
+        Database::connection()->prepare('DELETE FROM unifi_access_groups WHERE connection_id = :c AND unifi_id = :u')
+            ->execute(['c' => $connectionId, 'u' => $unifiId]);
+    }
+
+    // ------------------------------------------------------------ Doors
+
+    public function upsertDoor(int $connectionId, array $door): void
+    {
+        $pdo = Database::connection();
+        $sql = 'INSERT INTO unifi_doors
+                    (connection_id, unifi_id, name, full_name, floor_id, door_type, lock_status, raw_json)
+                VALUES
+                    (:c, :uid, :name, :full, :floor, :type, :lock, :raw)
+                ON DUPLICATE KEY UPDATE
+                    name = VALUES(name), full_name = VALUES(full_name), floor_id = VALUES(floor_id),
+                    door_type = VALUES(door_type), lock_status = VALUES(lock_status),
+                    raw_json = VALUES(raw_json), last_synced_at = CURRENT_TIMESTAMP';
+        $pdo->prepare($sql)->execute([
+            'c' => $connectionId,
+            'uid' => (string) ($door['id'] ?? ''),
+            'name' => (string) ($door['name'] ?? ''),
+            'full' => $door['full_name'] ?? ($door['name'] ?? null),
+            'floor' => $door['floor_id'] ?? null,
+            'type' => $door['type'] ?? null,
+            'lock' => $door['door_lock_relay_status'] ?? null,
+            'raw' => json_encode($door, JSON_UNESCAPED_UNICODE),
+        ]);
+    }
+
+    // ---------------------------------------------------------- Reading
+
+    public function countUsers(?int $connectionId = null): int
+    {
+        $sql = 'SELECT COUNT(*) FROM unifi_users';
+        $params = [];
+        if ($connectionId !== null) {
+            $sql .= ' WHERE connection_id = :c';
+            $params['c'] = $connectionId;
+        }
+        $stmt = Database::connection()->prepare($sql);
+        $stmt->execute($params);
+        return (int) $stmt->fetchColumn();
+    }
+
+    public function countCredentials(?int $connectionId = null, ?string $status = null): int
+    {
+        $sql = 'SELECT COUNT(*) FROM unifi_credentials';
+        $where = [];
+        $params = [];
+        if ($connectionId !== null) {
+            $where[] = 'connection_id = :c';
+            $params['c'] = $connectionId;
+        }
+        if ($status !== null) {
+            $where[] = 'status = :s';
+            $params['s'] = $status;
+        }
+        if ($where) {
+            $sql .= ' WHERE ' . implode(' AND ', $where);
+        }
+        $stmt = Database::connection()->prepare($sql);
+        $stmt->execute($params);
+        return (int) $stmt->fetchColumn();
+    }
+
+    public function countFreeCredentials(?int $connectionId = null): int
+    {
+        $sql = 'SELECT COUNT(*) FROM unifi_credentials WHERE (user_unifi_id IS NULL OR user_unifi_id = "")';
+        $params = [];
+        if ($connectionId !== null) {
+            $sql .= ' AND connection_id = :c';
+            $params['c'] = $connectionId;
+        }
+        $stmt = Database::connection()->prepare($sql);
+        $stmt->execute($params);
+        return (int) $stmt->fetchColumn();
+    }
+
+    public function countAccessGroups(?int $connectionId = null): int
+    {
+        $sql = 'SELECT COUNT(*) FROM unifi_access_groups';
+        $params = [];
+        if ($connectionId !== null) {
+            $sql .= ' WHERE connection_id = :c';
+            $params['c'] = $connectionId;
+        }
+        $stmt = Database::connection()->prepare($sql);
+        $stmt->execute($params);
+        return (int) $stmt->fetchColumn();
+    }
+
+    public function countDoors(?int $connectionId = null): int
+    {
+        $sql = 'SELECT COUNT(*) FROM unifi_doors';
+        $params = [];
+        if ($connectionId !== null) {
+            $sql .= ' WHERE connection_id = :c';
+            $params['c'] = $connectionId;
+        }
+        $stmt = Database::connection()->prepare($sql);
+        $stmt->execute($params);
+        return (int) $stmt->fetchColumn();
+    }
+
+    public function clearConnection(int $connectionId): void
+    {
+        $pdo = Database::connection();
+        $tables = ['unifi_users', 'unifi_credentials', 'unifi_access_groups', 'unifi_doors'];
+        foreach ($tables as $table) {
+            $pdo->prepare("DELETE FROM {$table} WHERE connection_id = :c")->execute(['c' => $connectionId]);
+        }
+    }
+
+    private function userParams(int $connectionId, array $user): array
+    {
+        $first = $user['first_name'] ?? '';
+        $last = $user['last_name'] ?? '';
+        $full = $user['full_name'] ?? trim($first . ' ' . $last);
+
+        return [
+            'c' => $connectionId,
+            'uid' => (string) ($user['id'] ?? ''),
+            'fn' => $first !== '' ? $first : null,
+            'ln' => $last !== '' ? $last : null,
+            'full' => $full !== '' ? $full : null,
+            'email' => $user['user_email'] ?? $user['email'] ?? null,
+            'emp' => $user['employee_number'] ?? null,
+            'status' => $user['status'] ?? null,
+            'onboard' => isset($user['onboard_time']) ? (int) $user['onboard_time'] : null,
+            'policies' => json_encode($user['access_policy_ids'] ?? [], JSON_UNESCAPED_UNICODE),
+            'raw' => json_encode($user, JSON_UNESCAPED_UNICODE),
+        ];
+    }
+}
