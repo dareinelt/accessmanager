@@ -11,9 +11,26 @@ use PDO;
 
 final class Auth
 {
+    public const ROLE_SYSADMIN = 'sysadmin';
     public const ROLE_ADMIN = 'admin';
     public const ROLE_OPERATOR = 'operator';
     public const ROLE_READONLY = 'readonly';
+
+    /** All assignable roles, ordered by privilege (highest first). */
+    public const ROLES = [
+        self::ROLE_SYSADMIN,
+        self::ROLE_ADMIN,
+        self::ROLE_OPERATOR,
+        self::ROLE_READONLY,
+    ];
+
+    /** Privilege ranks; a higher rank satisfies lower-rank role checks. */
+    private const RANK = [
+        self::ROLE_SYSADMIN => 4,
+        self::ROLE_ADMIN => 3,
+        self::ROLE_OPERATOR => 2,
+        self::ROLE_READONLY => 1,
+    ];
 
     /**
      * Verify credentials and establish a session.
@@ -74,7 +91,14 @@ final class Auth
 
     public static function hasRole(string ...$roles): bool
     {
-        return in_array(self::role(), $roles, true);
+        $rank = self::RANK[self::role()] ?? 0;
+        foreach ($roles as $role) {
+            $required = self::RANK[$role] ?? 0;
+            if ($required > 0 && $rank >= $required) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public static function requireLogin(): void

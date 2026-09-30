@@ -7,8 +7,9 @@ Schema: `database/migrations/001_initial.sql`. Engine InnoDB, Zeichensatz
 
 | Tabelle               | Zweck                                                        |
 |-----------------------|--------------------------------------------------------------|
-| `roles`               | Rollen (`admin`, `operator`, `readonly`)                      |
+| `roles`               | Rollen (`sysadmin`, `admin`, `operator`, `readonly`)          |
 | `users`               | Lokale Anmelde-Benutzer (Passwort als `password_hash`)        |
+| `system_secrets`      | Verschlüsselte Systemdaten (AD, DNs, API-Endpunkte)           |
 | `login_attempts`      | Brute-Force-Schutz (Rate-Limiting)                            |
 | `unifi_connections`   | Ein UniFi-Controller je Standort; Token verschlüsselt         |
 | `unifi_users`         | Cache: Personen                                               |
@@ -39,3 +40,7 @@ auftreten kann.
 API-Token (Base64 aus IV + Tag + Ciphertext). Der Schlüssel wird aus
 `APP_SECRET` abgeleitet. Der Klartext verlässt die Anwendung nur für den
 tatsächlichen API-Aufruf.
+
+Analog speichert `system_secrets.value_enc` vertrauliche Systemdaten
+(AD-Daten, DNs, API-Endpunkte) AES-256-GCM verschlüsselt. Zugriff nur für
+`sysadmin`; Anzeige und Änderung werden im Audit-Log protokolliert.

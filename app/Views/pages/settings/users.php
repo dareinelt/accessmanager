@@ -1,6 +1,6 @@
 <?php
 /** @var array $users */
-$roleLabels = ['admin' => 'Administrator', 'operator' => 'Operator', 'readonly' => 'Nur Lesen'];
+$roleLabels = ['sysadmin' => 'Systemadministrator', 'admin' => 'Administrator', 'operator' => 'Operator', 'readonly' => 'Nur Lesen'];
 ?>
 <div class="page-head">
     <div>
@@ -57,6 +57,7 @@ $roleLabels = ['admin' => 'Administrator', 'operator' => 'Operator', 'readonly' 
                 <option value="readonly">Nur Lesen</option>
                 <option value="operator">Operator</option>
                 <option value="admin">Administrator</option>
+                <option value="sysadmin">Systemadministrator</option>
             </select>
         </label>
         <button type="submit" class="btn btn-primary btn-block">Anlegen</button>
@@ -71,7 +72,7 @@ document.getElementById('btn-user-create').addEventListener('click', () => {
 });
 
 function editUser(u) {
-    const roles = [['readonly','Nur Lesen'],['operator','Operator'],['admin','Administrator']];
+    const roles = [['readonly','Nur Lesen'],['operator','Operator'],['admin','Administrator'],['sysadmin','Systemadministrator']];
     const html =
         '<form id="user-edit-form">' +
         '  <label class="field"><span class="field-label">E-Mail</span><input class="input" type="email" name="email" required value="' + esc(u.email) + '"></label>' +

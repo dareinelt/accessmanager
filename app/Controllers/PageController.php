@@ -8,6 +8,7 @@ use App\Config\Config;
 use App\Core\App;
 use App\Core\Request;
 use App\Security\Auth;
+use App\Services\SystemSecretService;
 
 /**
  * Server-rendered page controllers. Each section page is rendered here with
@@ -146,6 +147,15 @@ final class PageController extends BaseController
                 'php_version' => PHP_VERSION,
             ],
             'settings' => App::settings()->all(),
+        ]);
+    }
+
+    public function systemSecrets(Request $request): void
+    {
+        Auth::requireRole(Auth::ROLE_SYSADMIN);
+        $this->render('system-secrets/index', 'system-secrets', [
+            'secrets' => App::systemSecrets()->list(),
+            'categories' => SystemSecretService::CATEGORIES,
         ]);
     }
 

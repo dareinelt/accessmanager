@@ -37,7 +37,7 @@ final class AppUserService
             throw new \InvalidArgumentException('Das Passwort muss mindestens 10 Zeichen lang sein.');
         }
         $role = (string) ($data['role'] ?? Auth::ROLE_READONLY);
-        if (!in_array($role, [Auth::ROLE_ADMIN, Auth::ROLE_OPERATOR, Auth::ROLE_READONLY], true)) {
+        if (!in_array($role, Auth::ROLES, true)) {
             throw new \InvalidArgumentException('Ungültige Rolle.');
         }
 
@@ -55,7 +55,7 @@ final class AppUserService
 
     public function update(int $id, array $data, ?int $actorId = null, ?string $actorName = null): void
     {
-        if (array_key_exists('role', $data) && !in_array((string) $data['role'], [Auth::ROLE_ADMIN, Auth::ROLE_OPERATOR, Auth::ROLE_READONLY], true)) {
+        if (array_key_exists('role', $data) && !in_array((string) $data['role'], Auth::ROLES, true)) {
             throw new \InvalidArgumentException('Ungültige Rolle.');
         }
         if (array_key_exists('password', $data) && $data['password'] !== '' && strlen((string) $data['password']) < 10) {
