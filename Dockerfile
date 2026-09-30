@@ -7,7 +7,8 @@ RUN apk add --no-cache \
         oniguruma \
         icu-libs \
         ca-certificates \
-        tzdata
+        tzdata \
+        libldap
 
 # Build dependencies required to compile PHP extensions.
 RUN apk add --no-cache --virtual .build-deps \
@@ -16,10 +17,13 @@ RUN apk add --no-cache --virtual .build-deps \
         libjpeg-turbo-dev \
         oniguruma-dev \
         icu-dev \
+        openldap-dev \
     && docker-php-ext-install -j"$(nproc)" pdo_mysql mysqli mbstring \
     && docker-php-ext-configure gd --with-jpeg \
     && docker-php-ext-install -j"$(nproc)" gd \
     && docker-php-ext-install -j"$(nproc)" intl \
+    && docker-php-ext-configure ldap --with-libdir=lib \
+    && docker-php-ext-install -j"$(nproc)" ldap \
     && apk del .build-deps
 
 # Run as a non-root user.

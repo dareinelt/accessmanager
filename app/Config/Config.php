@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Config;
 
+use App\Security\Crypto;
+
 final class Config
 {
     private static ?array $items = null;
@@ -99,5 +101,40 @@ final class Config
     public static function appName(): string
     {
         return (string) self::get('APP_NAME', 'UniFi Access Manager');
+    }
+
+    /**
+     * Active Directory / LDAP settings as a single normalised array.
+     *
+     * @return array<string,mixed>
+     */
+    public static function ldap(): array
+    {
+        return [
+            'host' => (string) self::get('LDAP_HOST', ''),
+            'port' => self::int('LDAP_PORT', 389),
+            'base_dn' => (string) self::get('LDAP_BASE_DN', ''),
+            'bind_dn' => (string) self::get('LDAP_BIND_DN', ''),
+            'bind_password' => self::ldapBindPassword(),
+            'use_tls' => self::bool('LDAP_USE_TLS', false),
+            'card_attribute' => (string) self::get('LDAP_CARD_ATTRIBUTE', 'employeeID'),
+            'user_filter' => (string) self::get('LDAP_USER_FILTER', '(&(objectCategory=person)(objectClass=user))'),
+            'group_filter' => (string) self::get('LDAP_GROUP_FILTER', '(objectClass=group)'),
+            'group_base_dn' => (string) self::get('LDAP_GROUP_BASE_DN', ''),
+            'mock' => self::bool('LDAP_MOCK', false),
+        ];
+    }
+
+    /**
+     * Resolve the LDAP bind password: an encrypted value (LDAP_BIND_PASSWORD_ENC)
+     * takes precedence over the plaintext LDAP_BIND_PASSWORD.
+     */
+    public static function ldapBindPassword(): string
+    {
+        $enc = (string) self::get('LDAP_BIND_PASSWORD_ENC', '');
+        if ($enc !== '') {
+            return Crypto::decrypt($enc);
+        }
+        return (string) self::get('LDAP_BIND_PASSWORD', '');
     }
 }

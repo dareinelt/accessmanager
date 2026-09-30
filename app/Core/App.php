@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Core;
 
+use App\Repositories\AdGroupMappingRepository;
 use App\Repositories\AppUserRepository;
 use App\Repositories\AuditRepository;
 use App\Repositories\CacheRepository;
@@ -14,12 +15,15 @@ use App\Repositories\SyncLogRepository;
 use App\Repositories\SystemSecretRepository;
 use App\Repositories\TlsCertificateRepository;
 use App\Services\AccessGroupService;
+use App\Services\AdSyncService;
 use App\Services\AppUserService;
 use App\Services\AuditService;
 use App\Services\AuthService;
 use App\Services\CredentialService;
 use App\Services\DashboardService;
 use App\Services\DoorService;
+use App\Services\Ldap\LdapClientFactory;
+use App\Services\Ldap\LdapClientInterface;
 use App\Services\PersonService;
 use App\Services\SiteService;
 use App\Services\SyncService;
@@ -138,6 +142,29 @@ final class App
         return self::$services['tls'] ??= new TlsCertificateService(
             new TlsCertificateRepository(),
             (string) \App\Config\Config::get('APP_URL', 'https://localhost:8443'),
+        );
+    }
+
+    public static function ldap(): LdapClientInterface
+    {
+        return self::$services['ldap'] ??= LdapClientFactory::create();
+    }
+
+    public static function adMappings(): AdGroupMappingRepository
+    {
+        return self::$services['ad_mappings'] ??= new AdGroupMappingRepository();
+    }
+
+    public static function ad(): AdSyncService
+    {
+        return self::$services['ad'] ??= new AdSyncService(
+            self::ldap(),
+            self::adMappings(),
+            new CatalogRepository(),
+            new CacheRepository(),
+            new ConnectionRepository(),
+            self::persons(),
+            self::audit(),
         );
     }
 }

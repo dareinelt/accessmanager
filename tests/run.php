@@ -15,7 +15,9 @@ require dirname(__DIR__) . '/app/bootstrap.php';
 
 use App\Config\Config;
 use App\Core\App;
+use App\Repositories\AdGroupMappingRepository;
 use App\Repositories\AppUserRepository;
+use App\Repositories\CacheRepository;
 use App\Repositories\CatalogRepository;
 use App\Repositories\ConnectionRepository;
 use App\Repositories\SystemSecretRepository;
@@ -23,6 +25,8 @@ use App\Repositories\TlsCertificateRepository;
 use App\Security\Auth;
 use App\Security\Crypto;
 use App\Security\Csrf;
+use App\Services\AdSyncService;
+use App\Services\Ldap\MockLdapClient;
 
 $tests = [];
 $passed = 0;
@@ -415,6 +419,73 @@ test('SystemSecretService lehnt doppelte Schlüssel ab', function () {
     } finally {
         $service->delete($id);
     }
+});
+
+// ---------------------------------------------------------------------
+// 11. AD-Integration (LDAP + Gruppen-Mapping + Sync)
+// ---------------------------------------------------------------------
+echo "\n[11] AD-Integration\n";
+test('MockLdapClient liefert Benutzer und Gruppen', function () {
+    $ldap = new MockLdapClient();
+    $users = $ldap->getUsers();
+    $groups = $ldap->getGroups();
+    assertTrue(count($users) > 0, 'Mock-LDAP sollte Benutzer liefern');
+    assertTrue(count($groups) > 0, 'Mock-LDAP sollte Gruppen liefern');
+    assertTrue(isset($users[0]['identifier'], $users[0]['email']), 'Benutzer braucht identifier + email');
+    assertTrue(isset($groups[0]['dn'], $groups[0]['name']), 'Gruppe braucht dn + name');
+});
+
+test('AdGroupMappingRepository CRUD und Abfragen', function () {
+    $repo = new AdGroupMappingRepository();
+    $connections = (new ConnectionRepository())->all();
+    assertTrue(count($connections) > 0, 'Es sollte mindestens eine Verbindung geben');
+    $connectionId = (int) $connections[0]['id'];
+
+    $groups = App::groups()->list($connectionId);
+    assertTrue(count($groups) > 0, 'Es sollten Zutrittsgruppen synchronisiert sein');
+    $accessGroupId = (string) $groups[0]['unifi_id'];
+    $dn = 'CN=IT,OU=Groups,DC=example,DC=com';
+
+    $id = $repo->create($connectionId, $dn, $accessGroupId, 'IT');
+    try {
+        $found = $repo->find($id);
+        assertNotEmpty($found, 'Zuordnung sollte gefunden werden');
+        assertSame($dn, $found['ad_group_dn']);
+        assertSame($accessGroupId, $found['access_group_id']);
+        assertSame('IT', $found['ad_group_name']);
+        assertSame($connectionId, (int) $found['connection_id']);
+        assertTrue($repo->exists($connectionId, $dn), 'exists sollte true liefern');
+        assertTrue(in_array($accessGroupId, $repo->mappedAccessGroupIds($connectionId), true), 'mappedAccessGroupIds sollte die Gruppe enthalten');
+        assertTrue(count($repo->list($connectionId)) >= 1, 'list sollte die Zuordnung enthalten');
+
+        $repo->update($id, ['connection_id' => $connectionId, 'ad_group_name' => 'IT-Abteilung']);
+        assertSame('IT-Abteilung', $repo->find($id)['ad_group_name'], 'update sollte den Namen ändern');
+        assertSame($connectionId, (int) $repo->find($id)['connection_id'], 'update sollte connection_id übernehmen');
+
+        assertTrue(is_array($repo->findNonCompliant($connectionId)), 'findNonCompliant sollte ein Array liefern');
+    } finally {
+        $repo->delete($id);
+    }
+    assertTrue($repo->find($id) === null, 'Nach delete sollte die Zuordnung weg sein');
+});
+
+test('AdSyncService::run liefert eine Zusammenfassung (Mock-LDAP)', function () {
+    $sync = new AdSyncService(
+        new MockLdapClient(),
+        new AdGroupMappingRepository(),
+        new CatalogRepository(),
+        new CacheRepository(),
+        new ConnectionRepository(),
+        App::persons(),
+        App::audit(),
+    );
+    $summary = $sync->run();
+    foreach (['source', 'users_fetched', 'matched', 'created', 'cards_assigned', 'groups_changed', 'errors'] as $key) {
+        assertTrue(array_key_exists($key, $summary), "Zusammenfassung braucht das Feld '{$key}'");
+    }
+    assertTrue($summary['users_fetched'] > 0, 'Mock-LDAP sollte Benutzer liefern');
+    assertTrue(is_array($summary['errors']), 'errors sollte ein Array sein');
+    assertTrue(in_array($summary['status'], ['success', 'partial', 'error'], true), 'status sollte gültig sein');
 });
 
 // ---------------------------------------------------------------------

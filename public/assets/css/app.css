@@ -90,12 +90,15 @@ a:hover { text-decoration: underline; }
 
 .sidebar-foot {
     display: flex;
-    align-items: center;
-    gap: 10px;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
     padding: 16px 20px;
     border-top: 1px solid rgba(255, 255, 255, .08);
     font-size: 12px;
 }
+.sidebar-foot-row { display: flex; align-items: center; gap: 10px; }
+.foot-credit { color: rgba(255, 255, 255, .45); font-size: 11px; line-height: 1.4; }
 .foot-user { color: #fff; font-weight: 600; }
 .foot-role { color: #94a3b8; }
 .dot { width: 9px; height: 9px; border-radius: 50%; background: #64748b; }
@@ -371,9 +374,10 @@ table.table { width: 100%; border-collapse: collapse; }
 
 @media (max-width: 860px) {
     .sidebar { width: 64px; flex-basis: 64px; }
-    .brand-name, .nav-item span, .foot-user, .foot-role { display: none; }
+    .brand-name, .nav-item span, .foot-credit, .foot-user, .foot-role { display: none; }
     .brand { justify-content: center; padding: 16px 0; }
     .nav-item { justify-content: center; }
-    .sidebar-foot { justify-content: center; padding: 14px 0; }
+    .sidebar-foot { padding: 14px 0; }
+    .sidebar-foot-row { justify-content: center; }
     .detail-grid { grid-template-columns: 1fr; }
 }
