@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use App\Config\Config;
 use App\Repositories\AppUserRepository;
 use App\Security\Auth;
 
@@ -61,6 +62,17 @@ final class AppUserService
         if (array_key_exists('password', $data) && $data['password'] !== '' && strlen((string) $data['password']) < 10) {
             throw new \InvalidArgumentException('Das Passwort muss mindestens 10 Zeichen lang sein.');
         }
+
+        // The default admin account is always a sysadmin and must never be demoted.
+        $user = $this->users->find($id);
+        if ($user !== null
+            && $user['username'] === (string) Config::get('ADMIN_USERNAME', 'admin')
+            && array_key_exists('role', $data)
+            && (string) $data['role'] !== Auth::ROLE_SYSADMIN
+        ) {
+            throw new \InvalidArgumentException('Der Standard-Administrator muss immer Systemadministrator sein.');
+        }
+
         $this->users->update($id, $data);
         $this->audit->log('user.update', 'app_user', (string) $id, (string) $id, userId: $actorId, username: $actorName);
     }

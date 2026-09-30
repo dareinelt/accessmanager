@@ -80,16 +80,21 @@ function seed(): void
     }
     out('Rollen angelegt.');
 
-    // Initial admin user
+    // Initial admin user – the default admin is always a sysadmin.
     $users = new AppUserRepository();
-    if ($users->findByUsername((string) Config::get('ADMIN_USERNAME', 'admin')) === null) {
+    $adminUsername = (string) Config::get('ADMIN_USERNAME', 'admin');
+    $admin = $users->findByUsername($adminUsername);
+    if ($admin === null) {
         $users->create(
-            username: (string) Config::get('ADMIN_USERNAME', 'admin'),
+            username: $adminUsername,
             email: (string) Config::get('ADMIN_EMAIL', 'admin@example.com'),
             password: (string) Config::get('ADMIN_PASSWORD', 'admin1234'),
-            role: 'admin',
+            role: 'sysadmin',
         );
-        out('Administrator angelegt (' . Config::get('ADMIN_USERNAME', 'admin') . ').');
+        out('Administrator angelegt (' . $adminUsername . ').');
+    } elseif ($admin['role'] !== 'sysadmin') {
+        $users->update((int) $admin['id'], ['role' => 'sysadmin']);
+        out('Administrator zum Systemadministrator hochgestuft (' . $adminUsername . ').');
     } else {
         out('Administrator existiert bereits.');
     }
