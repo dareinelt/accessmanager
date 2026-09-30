@@ -1,5 +1,8 @@
 # Architektur
 
+> Screenshots der Oberfläche und eine bebilderte Anleitung finden Sie in der
+> [Bedienungsanleitung](user-guide.md).
+
 ## Überblick
 
 Die Anwendung ist eine klassische, serverseitig gerenderte Web-App nach dem

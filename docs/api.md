@@ -1,5 +1,8 @@
 # Interne API
 
+> Screenshots der Oberfläche und eine bebilderte Anleitung finden Sie in der
+> [Bedienungsanleitung](user-guide.md).
+
 Alle JSON-Endpunkte liegen unter `/api/*` und erfordern eine aktive Session
 (Authentifizierung). Antwortformat:
 

@@ -1,5 +1,8 @@
 # UniFi API
 
+> Screenshots der Oberfläche und eine bebilderte Anleitung finden Sie in der
+> [Bedienungsanleitung](user-guide.md).
+
 ## Grundsatz
 
 Die Anwendung nutzt ausschließlich die **lokale** UniFi Access API. Jeder

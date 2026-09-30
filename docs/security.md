@@ -1,5 +1,8 @@
 # Sicherheit
 
+> Screenshots der Oberfläche und eine bebilderte Anleitung finden Sie in der
+> [Bedienungsanleitung](user-guide.md).
+
 ## Authentifizierung & Session
 
 - Lokale Anmeldung gegen `users` (Passwort-Hash via `password_hash`/`password_verify`).
