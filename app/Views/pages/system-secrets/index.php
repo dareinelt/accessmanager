@@ -66,7 +66,7 @@
 
 <script>
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const categories = <?= json_attr($categories) ?>;
+const categories = <?= json_encode($categories, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
 
 document.getElementById('btn-secret-create').addEventListener('click', () => {
     UAM.modal('Neuer Eintrag', document.getElementById('tpl-secret-create').innerHTML);
