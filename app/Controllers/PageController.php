@@ -149,6 +149,18 @@ final class PageController extends BaseController
         ]);
     }
 
+    public function adMappings(Request $request): void
+    {
+        Auth::requireRole(Auth::ROLE_ADMIN, Auth::ROLE_OPERATOR);
+        $this->render('ad_mappings/index', 'ad-mappings', [
+            'mappings' => App::adMappings()->list(),
+            'connections' => App::sites()->list(),
+            'accessGroups' => App::groups()->list(),
+            'adSource' => App::ldap()->label(),
+            'nonCompliant' => App::adMappings()->findNonCompliant(),
+        ]);
+    }
+
     private function render(string $template, string $section, array $data = []): void
     {
         $this->view('pages/' . $template, array_merge($data, [
