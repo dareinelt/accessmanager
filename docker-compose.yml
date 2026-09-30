@@ -72,7 +72,7 @@ services:
       dockerfile: Dockerfile
     container_name: uam_cron
     restart: unless-stopped
-    command: ["sh", "-c", "while true; do php /var/www/html/bin/cli.php sync; php /var/www/html/bin/cli.php tls:sync; sleep 300; done"]
+    command: ["sh", "-c", "while true; do php /var/www/html/bin/cli.php sync; php /var/www/html/bin/cli.php tls:sync; php /var/www/html/bin/cli.php backup:run; sleep 300; done"]
     env_file:
       - .env
     depends_on:

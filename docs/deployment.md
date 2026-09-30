@@ -35,12 +35,12 @@ Die Anwendung ist anschließend unter `http://localhost:8080` erreichbar
 | `web`  | `uam_web`  | Nginx, statische Assets, Reverse-Proxy zu PHP-FPM |
 | `app`  | `uam_app`  | PHP-FPM (Applikationscode)                        |
 | `db`   | `uam_db`   | MariaDB 11.4                                      |
-| `cron` | `uam_cron` | Periodische Synchronisation (Schleife, 300 s)     |
+| `cron` | `uam_cron` | Periodische Synchronisation + Backups (Schleife, 300 s) |
 
 ## Daten & Persistenz
 
 - `db_data` – MariaDB-Daten.
-- `app_storage` – Logs und Cache (`storage/logs`, `storage/cache`).
+- `app_storage` – Logs, Cache und Backups (`storage/logs`, `storage/cache`, `storage/backups`).
 
 Beide Volumes werden zwischen Neustarts beibehalten.
 
@@ -50,8 +50,13 @@ Beide Volumes werden zwischen Neustarts beibehalten.
 docker compose run --rm app php bin/cli.php migrate
 docker compose run --rm app php bin/cli.php seed
 docker compose run --rm app php bin/cli.php sync
+docker compose run --rm app php bin/cli.php backup:run
 docker compose run --rm app php bin/cli.php create-admin <user> <mail> <pass> [role]
 ```
+
+Der Cron-Dienst führt `backup:run` bei jedem Takt aus; der Befehl prüft
+selbst, ob ein Backup fällig ist (`backup_enabled`, `backup_interval_minutes`)
+und hält nur die konfigurierte Anzahl Archive vor (`backup_retention`).
 
 ## Produktionshinweise
 

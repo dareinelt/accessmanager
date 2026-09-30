@@ -17,6 +17,7 @@ use App\Config\Config;
 use App\Core\App;
 use App\Repositories\AdGroupMappingRepository;
 use App\Repositories\AppUserRepository;
+use App\Repositories\BackupRepository;
 use App\Repositories\CacheRepository;
 use App\Repositories\CatalogRepository;
 use App\Repositories\ConnectionRepository;
@@ -467,6 +468,22 @@ test('AdGroupMappingRepository CRUD und Abfragen', function () {
         $repo->delete($id);
     }
     assertTrue($repo->find($id) === null, 'Nach delete sollte die Zuordnung weg sein');
+});
+
+test('BackupService: Export/Restore-Roundtrip', function () {
+    $service = App::backup();
+    $before = $service->snapshot('test')['tables'];
+    $json = $service->toJson('test');
+    $snapshot = $service->decode($json);
+    $preview = $service->preview($snapshot);
+    assertTrue($preview['total'] > 0, 'Backup sollte Datensätze enthalten');
+    assertSame('accessmanager-backup', $snapshot['format'], 'Format sollte gesetzt sein');
+
+    $service->restore($snapshot, 0, 'test');
+    $after = $service->snapshot()['tables'];
+    foreach (BackupRepository::TABLES as $table) {
+        assertSame(count($before[$table] ?? []), count($after[$table] ?? []), "Tabelle {$table} sollte nach Restore gleich viele Zeilen haben");
+    }
 });
 
 test('AdSyncService::run liefert eine Zusammenfassung (Mock-LDAP)', function () {

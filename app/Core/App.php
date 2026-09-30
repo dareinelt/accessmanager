@@ -7,6 +7,7 @@ namespace App\Core;
 use App\Repositories\AdGroupMappingRepository;
 use App\Repositories\AppUserRepository;
 use App\Repositories\AuditRepository;
+use App\Repositories\BackupRepository;
 use App\Repositories\CacheRepository;
 use App\Repositories\CatalogRepository;
 use App\Repositories\ConnectionRepository;
@@ -18,6 +19,7 @@ use App\Services\AccessGroupService;
 use App\Services\AdSyncService;
 use App\Services\AppUserService;
 use App\Services\AuditService;
+use App\Services\BackupService;
 use App\Services\AuthService;
 use App\Services\CredentialService;
 use App\Services\DashboardService;
@@ -166,5 +168,10 @@ final class App
             self::persons(),
             self::audit(),
         );
+    }
+
+    public static function backup(): BackupService
+    {
+        return self::$services['backup'] ??= new BackupService(new BackupRepository());
     }
 }

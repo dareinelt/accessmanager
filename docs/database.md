@@ -44,3 +44,16 @@ tatsächlichen API-Aufruf.
 Analog speichert `system_secrets.value_enc` vertrauliche Systemdaten
 (AD-Daten, DNs, API-Endpunkte) AES-256-GCM verschlüsselt. Zugriff nur für
 `sysadmin`; Anzeige und Änderung werden im Audit-Log protokolliert.
+
+## Backup & Wiederherstellung
+
+Ein Backup umfasst die konfigurierbaren Tabellen (`roles`, `app_settings`,
+`users`, `unifi_connections`, `system_secrets`, `tls_certificates`,
+`ad_group_mappings`) sowie die Cache-Tabellen (`unifi_users`,
+`unifi_credentials`, `unifi_access_groups`, `unifi_doors`) als „doppelten
+Boden". Betriebslogs (`audit_logs`, `sync_logs`, `login_attempts`) sind nicht
+Bestandteil des Backups.
+
+Die Planung wird über `app_settings` gesteuert: `backup_enabled`
+(`1`/leer), `backup_interval_minutes`, `backup_retention` und
+`backup_last_run` (vom Cron gesetzt).

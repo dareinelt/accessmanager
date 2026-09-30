@@ -115,6 +115,9 @@ bzw. bei Fehlern:
 | GET | `/api/settings` | Einstellungen lesen |
 | PUT | `/api/settings` | Einstellungen schreiben |
 
+Schreibbare Schlüssel: `sync_enabled`, `sync_interval_minutes`,
+`backup_enabled`, `backup_interval_minutes`, `backup_retention`.
+
 ## CSV-Export (Web, keine JSON-API)
 
 | Methode | Pfad | Inhalt |
@@ -122,3 +125,18 @@ bzw. bei Fehlern:
 | GET | `/export/persons` | Personen als `personen.csv` |
 | GET | `/export/credentials` | Karten als CSV |
 | GET | `/export/audit` | Audit-Log als CSV |
+
+## Backup & Wiederherstellung (Web, keine JSON-API)
+
+Alle Routen erfordern die Rolle `admin` (bzw. `sysadmin`).
+
+| Methode | Pfad | Beschreibung |
+|---------|------|--------------|
+| GET  | `/backup` | Seite „Backup & Wiederherstellung" |
+| GET  | `/backup/download` | Sofort-Backup als JSON-Download |
+| GET  | `/backup/{filename}/download` | Gespeichertes Archiv herunterladen |
+| POST | `/backup/create` | Backup im Ordner `storage/backups` ablegen |
+| POST | `/backup/delete` | Gespeichertes Archiv löschen (`filename`) |
+| POST | `/backup/restore/preview` | JSON-Datei hochladen und Vorschau erzeugen (`backup_file`) |
+| POST | `/backup/restore/confirm` | Wiederherstellung bestätigen |
+| POST | `/backup/restore/discard` | Wiederherstellung abbrechen |

@@ -11,7 +11,8 @@ Zentrale Web-Anwendung zur Verwaltung von Personen, RFID-Karten, Zutrittsgruppen
 - **Standorte** – ein UniFi-Controller je Standort, inkl. Verbindungstest.
 - **Synchronisation** – periodischer Abgleich der lokalen Datenbank mit den Controllern.
 - **Audit-Log** – vollständige, revisionssichere Nachverfolgung aller Änderungen.
-- **Benutzer & Rollen** – lokale Anmeldung mit den Rollen *Administrator*, *Operator*, *Nur Lesen*.
+- **Benutzer & Rollen** – lokale Anmeldung mit den Rollen *Systemadministrator*, *Administrator*, *Operator*, *Nur Lesen*.
+- **Backup & Wiederherstellung** – alle Einstellungen plus die auf der Dream Machine vorhandenen Daten als unverschlüsseltes JSON-Archiv; on-demand als Download, planbar per Cron und wieder einspielbar.
 - **CSV-Export** – Personen, Karten und Audit-Log exportierbar.
 
 ## Technologie
@@ -62,7 +63,7 @@ app/
   Security/       Auth, CSRF, Crypto (AES-256-GCM)
   Services/       Fachlogik
   Views/          Layouts, Seiten und Partials
-bin/cli.php       migrate, seed, sync, create-admin
+bin/cli.php       migrate, seed, sync, create-admin, backup:run
 database/         SQL-Migrationen
 docker/           Nginx-Konfiguration
 public/           Front-Controller, CSS, JS
@@ -80,6 +81,24 @@ vollständige Referenz steht in `.env.example`. Wichtig:
 | `UNIFI_API_MOCK`  | `true` = Mock-API, `false` = echte UniFi-Controller.             |
 | `DB_*`            | Datenbankverbindung (Standardwerte passen zum Compose-Stack).    |
 | `ADMIN_*`         | Initialer Admin-Account (nur beim Seeden verwendet).             |
+
+## Backup & Wiederherstellung
+
+Unter **Backup & Wiederherstellung** (Admin-Rolle) lassen sich alle
+konfigurierbaren Daten sichern und wiederherstellen:
+
+- **Sofort-Backup** lädt ein vollständiges JSON-Archiv als Download herunter
+  oder legt es im Ordner `storage/backups` ab.
+- **Automatische Backups** können in der Webapp aktiviert und mit einem
+  Intervall geplant werden; der Cron-Container führt `php bin/cli.php backup:run`
+  aus, legt Archive ab und hält nur die konfigurierte Anzahl vor.
+- **Wiederherstellung** aus einer `.json`-Datei mit Vorschau und Bestätigung.
+
+Das Archiv ist **unverschlüsselt** und enthält neben den Einstellungen
+(Standorte, Benutzer, AD-Mappings, Systemgeheimnisse, Zertifikate) auch die
+zwischengespeicherten UniFi-Daten als „doppelten Boden". Verschlüsselte
+Datenbankwerte werden unverändert (als Chiffretext) exportiert und sind damit
+an das `APP_SECRET` der erzeugenden Installation gebunden.
 
 ## Dokumentation
 
