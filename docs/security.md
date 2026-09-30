@@ -62,6 +62,20 @@ und CSRF (`ApiController::requireCsrf()`). Webseiten prüfen über
 - `login_attempts`-Tabelle, Sperre nach 5 Fehlversuchen je Identifikator
   innerhalb von 15 Minuten (`Auth\RateLimiter`).
 
+## Backup & Wiederherstellung
+
+- Backups sind **unverschlüsselt** (JSON) und nur für vertrauenswürdige
+  Speicherorte bestimmt. Verschlüsselte Datenbankwerte (API-Tokens,
+  Systemgeheimnisse, private TLS-Schlüssel) werden unverändert als Chiffretext
+  exportiert und bleiben damit an das `APP_SECRET` der erzeugenden
+  Installation gebunden.
+- Zugriff auf Backup, Download und Wiederherstellung erfordert die Rolle
+  `admin` (bzw. `sysadmin`); alle mutierenden Aktionen sind CSRF-geschützt
+  und werden im Audit-Log protokolliert.
+- Die Wiederherstellung ersetzt die abgedeckten Tabellen vollständig und
+  erhält das Benutzerkonto des ausführenden Administrators, damit sich
+  niemand aussperren kann.
+
 ## Secrets & Logging
 
 - `Logger::redact()` maskiert Tokens, Passwörter und Authorization-Header.

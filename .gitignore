@@ -5,11 +5,13 @@
 # Vendor / dependencies (no composer packages by design)
 /vendor
 
-# Storage (logs, cache)
+# Storage (logs, cache, backups)
 /storage/logs/*
 /storage/cache/*
+/storage/backups/*
 !/storage/logs/.gitkeep
 !/storage/cache/.gitkeep
+!/storage/backups/.gitkeep
 
 # OS / editor
 .DS_Store

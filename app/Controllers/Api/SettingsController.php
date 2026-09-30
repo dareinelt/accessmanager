@@ -11,7 +11,13 @@ use App\Security\Auth;
 
 final class SettingsController extends ApiController
 {
-    private const EDITABLE = ['sync_interval_minutes', 'sync_enabled'];
+    private const EDITABLE = [
+        'sync_interval_minutes',
+        'sync_enabled',
+        'backup_enabled',
+        'backup_interval_minutes',
+        'backup_retention',
+    ];
 
     public function show(Request $request): never
     {

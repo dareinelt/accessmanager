@@ -13,6 +13,7 @@ declare(strict_types=1);
  *   php bin/cli.php tls:sync
  *   php bin/cli.php tls:state
  *   php bin/cli.php ad:sync
+ *   php bin/cli.php backup:run
  *   php bin/cli.php encrypt:secret <wert>
  */
 
@@ -184,6 +185,19 @@ function tlsState(): void
     }
 }
 
+function runBackup(): void
+{
+    $result = App::backup()->runScheduled();
+    if ($result === null) {
+        out('Kein Backup erforderlich (deaktiviert oder Intervall noch nicht erreicht).');
+        return;
+    }
+    out('Backup erstellt: ' . $result['filename'] . ' (' . number_format((int) $result['size']) . ' Bytes)');
+    if (($result['pruned'] ?? 0) > 0) {
+        out('Alte Archive bereinigt: ' . $result['pruned']);
+    }
+}
+
 match ($command) {
     'migrate' => runMigrations(),
     'seed' => seed(),
@@ -192,6 +206,7 @@ match ($command) {
     'tls:sync' => tlsSync(),
     'tls:state' => tlsState(),
     'ad:sync' => runAdSync(),
+    'backup:run' => runBackup(),
     'encrypt:secret' => encryptSecret($argv),
-    default => out("Verfügbare Befehle: migrate, seed, sync, create-admin, tls:sync, tls:state, ad:sync, encrypt:secret"),
+    default => out("Verfügbare Befehle: migrate, seed, sync, create-admin, tls:sync, tls:state, ad:sync, backup:run, encrypt:secret"),
 };

@@ -35,6 +35,15 @@ $router->get('/users', 'App\Controllers\PageController@users');
 $router->get('/settings', 'App\Controllers\PageController@settings');
 $router->get('/system-secrets', 'App\Controllers\PageController@systemSecrets');
 
+$router->get('/backup', 'App\Controllers\BackupController@index');
+$router->get('/backup/download', 'App\Controllers\BackupController@download');
+$router->get('/backup/{filename}/download', 'App\Controllers\BackupController@downloadFile');
+$router->post('/backup/create', 'App\Controllers\BackupController@create');
+$router->post('/backup/delete', 'App\Controllers\BackupController@delete');
+$router->post('/backup/restore/preview', 'App\Controllers\BackupController@previewRestore');
+$router->post('/backup/restore/confirm', 'App\Controllers\BackupController@confirmRestore');
+$router->post('/backup/restore/discard', 'App\Controllers\BackupController@discardRestore');
+
 $router->get('/certificates', 'App\Controllers\CertificateController@index');
 $router->post('/certificates/request', 'App\Controllers\CertificateController@createRequest');
 $router->get('/certificates/csr', 'App\Controllers\CertificateController@downloadCsr');
