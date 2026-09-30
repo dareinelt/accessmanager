@@ -90,6 +90,36 @@ final class ExportController extends BaseController
         );
     }
 
+    /**
+     * Reconciliation / drift export: Personen, die in Access eine gemappte
+     * Zutrittsgruppe besitzen, aber nicht (mehr) Mitglied der zugeordneten
+     * AD-Gruppe sind.
+     */
+    public function adNonCompliance(Request $request): void
+    {
+        Auth::requireRole(Auth::ROLE_ADMIN, Auth::ROLE_OPERATOR);
+        $connectionId = $request->query('connection_id');
+        $rows = App::adMappings()->findNonCompliant($connectionId !== null && $connectionId !== '' ? (int) $connectionId : null);
+
+        $data = [];
+        foreach ($rows as $r) {
+            $data[] = [
+                $r['connection_name'] ?? '',
+                $r['full_name'] ?? '',
+                $r['email'] ?? '',
+                $r['access_group_name'] ?? '',
+                $r['ad_group_name'] ?? '',
+                $r['ad_group_dn'] ?? '',
+            ];
+        }
+
+        $this->download(
+            'ad-datenabweichung.csv',
+            ['Standort', 'Person', 'E-Mail', 'Zutrittsgruppe', 'AD-Gruppe', 'AD-Gruppen-DN'],
+            $data,
+        );
+    }
+
     public function audit(Request $request): void
     {
         Auth::requireRole(Auth::ROLE_ADMIN);

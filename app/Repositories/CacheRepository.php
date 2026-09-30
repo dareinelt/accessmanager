@@ -37,6 +37,26 @@ final class CacheRepository
             ->execute(['c' => $connectionId, 'u' => $unifiId]);
     }
 
+    /**
+     * Persist the Active Directory identity and memberships that the AD sync
+     * has determined for a cached person.
+     *
+     * @param array<int,string> $memberOf
+     */
+    public function setUserAdMetadata(int $connectionId, string $unifiId, string $adIdentifier, array $memberOf): void
+    {
+        Database::connection()->prepare(
+            'UPDATE unifi_users
+             SET ad_identifier = :ad, ad_member_of_json = :member, ad_synced_at = NOW()
+             WHERE connection_id = :c AND unifi_id = :u'
+        )->execute([
+            'c' => $connectionId,
+            'u' => $unifiId,
+            'ad' => $adIdentifier !== '' ? $adIdentifier : null,
+            'member' => json_encode(array_values($memberOf), JSON_UNESCAPED_UNICODE),
+        ]);
+    }
+
     // ------------------------------------------------------ Credentials
 
     public function upsertCredential(int $connectionId, array $cred): void

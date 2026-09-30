@@ -476,6 +476,15 @@ final class MockUniFiApiClient implements UniFiApiClientInterface
         for ($i = 0; $i < 12; $i++) {
             $credentials[] = $this->makeCard($v, $cardIndex++, null, 'pending', 'ua_card');
         }
+        // Demo AD-sync cards with fixed, well-known UIDs so the mock LDAP
+        // employeeID values can be matched deterministically regardless of
+        // the connection's variant.
+        $adCard = $this->makeCard($v, $cardIndex++, null, 'pending', 'ua_card');
+        $adCard['display_id'] = 'AA:BB:CC:DD';
+        $credentials[] = $adCard;
+        $adCard = $this->makeCard($v, $cardIndex++, null, 'pending', 'ua_card');
+        $adCard['display_id'] = 'AA:BB:CC:DE';
+        $credentials[] = $adCard;
         // A couple of disabled / lost cards.
         $credentials[] = $this->makeCard($v, $cardIndex++, null, 'disable', 'ua_card');
         $credentials[] = $this->makeCard($v, $cardIndex++, null, 'loss', 'ua_card');

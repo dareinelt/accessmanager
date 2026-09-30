@@ -85,6 +85,25 @@ services:
     networks:
       - uam
 
+  uam-sync:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: uam_sync
+    restart: unless-stopped
+    command: ["sh", "-c", "while true; do php /var/www/html/bin/cli.php ad:sync; sleep 300; done"]
+    env_file:
+      - .env
+    depends_on:
+      db:
+        condition: service_healthy
+      app:
+        condition: service_started
+    volumes:
+      - app_storage:/var/www/html/storage
+    networks:
+      - uam
+
 volumes:
   db_data:
   app_storage:

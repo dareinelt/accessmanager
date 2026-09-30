@@ -12,6 +12,8 @@ declare(strict_types=1);
  *   php bin/cli.php create-admin <username> <email> <password> [role]
  *   php bin/cli.php tls:sync
  *   php bin/cli.php tls:state
+ *   php bin/cli.php ad:sync
+ *   php bin/cli.php encrypt:secret <wert>
  */
 
 require dirname(__DIR__) . '/app/bootstrap.php';
@@ -21,6 +23,7 @@ use App\Core\App;
 use App\Core\Database;
 use App\Repositories\AppUserRepository;
 use App\Repositories\ConnectionRepository;
+use App\Security\Crypto;
 
 $command = $argv[1] ?? 'help';
 
@@ -141,6 +144,35 @@ function tlsSync(): void
     out("TLS-Zertifikat bereitgestellt: {$live['label']} (Modus: {$live['mode']}).");
 }
 
+function encryptSecret(array $args): void
+{
+    $value = $args[2] ?? '';
+    if ($value === '') {
+        fail('Verwendung: php bin/cli.php encrypt:secret <wert>');
+    }
+    out('Verschlüsselt: ' . Crypto::encrypt($value));
+}
+
+function runAdSync(): void
+{
+    $summary = App::ad()->run();
+    out("AD-Sync abgeschlossen (Quelle: {$summary['source']}):");
+    out("  - AD-Benutzer geladen: {$summary['users_fetched']}");
+    out("  - Zugeordnet: {$summary['matched']}");
+    out("  - Neu angelegt: {$summary['created']}");
+    out("  - Karten zugewiesen: {$summary['cards_assigned']}");
+    out("  - Zutrittsgruppen geändert: {$summary['groups_changed']}");
+    if ($summary['errors'] !== []) {
+        out('  - Fehler: ' . count($summary['errors']));
+        foreach (array_slice($summary['errors'], 0, 10) as $e) {
+            $where = isset($e['connection']) ? "{$e['connection']}" : '';
+            $who = isset($e['identifier']) && $e['identifier'] !== '' ? " ({$e['identifier']})" : '';
+            out("    · {$where}{$who}: {$e['error']}");
+        }
+        exit(1);
+    }
+}
+
 function tlsState(): void
 {
     $state = App::tls()->state();
@@ -158,5 +190,7 @@ match ($command) {
     'create-admin' => createAdmin($argv),
     'tls:sync' => tlsSync(),
     'tls:state' => tlsState(),
-    default => out("Verfügbare Befehle: migrate, seed, sync, create-admin, tls:sync, tls:state"),
+    'ad:sync' => runAdSync(),
+    'encrypt:secret' => encryptSecret($argv),
+    default => out("Verfügbare Befehle: migrate, seed, sync, create-admin, tls:sync, tls:state, ad:sync, encrypt:secret"),
 };

@@ -29,6 +29,7 @@ $router->get('/groups', 'App\Controllers\PageController@groups');
 $router->get('/doors', 'App\Controllers\PageController@doors');
 $router->get('/sites', 'App\Controllers\PageController@sites');
 $router->get('/sync', 'App\Controllers\PageController@sync');
+$router->get('/ad-mappings', 'App\Controllers\PageController@adMappings');
 $router->get('/audit', 'App\Controllers\PageController@audit');
 $router->get('/users', 'App\Controllers\PageController@users');
 $router->get('/settings', 'App\Controllers\PageController@settings');
@@ -46,6 +47,7 @@ $router->post('/certificates/delete', 'App\Controllers\CertificateController@del
 $router->get('/export/persons', 'App\Controllers\ExportController@persons');
 $router->get('/export/credentials', 'App\Controllers\ExportController@credentials');
 $router->get('/export/audit', 'App\Controllers\ExportController@audit');
+$router->get('/export/ad-non-compliance', 'App\Controllers\ExportController@adNonCompliance');
 
 // ------------------------------------------------------------------ API
 $router->get('/api/dashboard', 'App\Controllers\Api\DashboardController@stats');
@@ -90,6 +92,14 @@ $router->delete('/api/users/{id}', 'App\Controllers\Api\UserController@delete');
 
 $router->get('/api/settings', 'App\Controllers\Api\SettingsController@show');
 $router->put('/api/settings', 'App\Controllers\Api\SettingsController@update');
+
+$router->get('/api/ad/mappings', 'App\Controllers\Api\AdMappingController@list');
+$router->post('/api/ad/mappings', 'App\Controllers\Api\AdMappingController@create');
+$router->put('/api/ad/mappings/{id}', 'App\Controllers\Api\AdMappingController@update');
+$router->delete('/api/ad/mappings/{id}', 'App\Controllers\Api\AdMappingController@delete');
+$router->get('/api/ad/groups', 'App\Controllers\Api\AdMappingController@groups');
+$router->get('/api/ad/non-compliant', 'App\Controllers\Api\AdMappingController@nonCompliant');
+$router->post('/api/ad/sync', 'App\Controllers\Api\AdMappingController@sync');
 
 // -------------------------------------------------------------- Dispatch
 try {
