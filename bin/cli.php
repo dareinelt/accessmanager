@@ -56,7 +56,11 @@ function runMigrations(): void
             if ($statement === '') {
                 continue;
             }
-            $pdo->exec($statement);
+            try {
+                $pdo->exec($statement);
+            } catch (\PDOException $e) {
+                fail('Migration ' . basename($file) . ' fehlgeschlagen: ' . $e->getMessage());
+            }
         }
         out('Migriert: ' . basename($file));
     }
@@ -169,6 +173,8 @@ function runAdSync(): void
     out("  - Neu angelegt: {$summary['created']}");
     out("  - Karten zugewiesen: {$summary['cards_assigned']}");
     out("  - Zutrittsgruppen geändert: {$summary['groups_changed']}");
+    out("  - Zugänge entzogen (AD-Konto deaktiviert/gelöscht): {$summary['revoked']}");
+    out("  - Reaktiviert: {$summary['reactivated']}");
     if ($summary['errors'] !== []) {
         out('  - Fehler: ' . count($summary['errors']));
         foreach (array_slice($summary['errors'], 0, 10) as $e) {

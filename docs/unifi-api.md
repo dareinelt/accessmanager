@@ -19,15 +19,36 @@ Karten oder Zutrittsgruppen bietet.
 ## Verwendete Endpunkte
 
 Die Implementierung (`app/Api/UniFiApiClient.php`) basiert auf der
-öffentlichen OpenAPI-Spezifikation der UniFi Access API (v4.x). Genutzt werden:
+öffentlichen OpenAPI-Spezifikation der UniFi Access API. Die HTTP-Methoden
+wurden gegen die Spezifikation geprüft
+([unifi-access-api-openapi](https://github.com/YuDefine/unifi-access-api-openapi)):
+Zuweisungen und Aktionen verwenden **PUT**, nur das Anlegen **POST**.
 
-| Bereich          | Endpunkte                                                                 |
-|------------------|---------------------------------------------------------------------------|
-| Benutzer         | `GET/POST /api/v1/developer/users`, `GET/PUT/DELETE /api/v1/developer/users/{id}` |
-| Zutrittsgruppen  | `GET/POST /api/v1/developer/users/{id}/access_policies`, `PUT /api/v1/developer/users/{id}/access_policies` |
-| Karten           | `GET/POST /api/v1/developer/users/{id}/nfc_cards`, `POST /api/v1/developer/credentials/nfc_cards/delete`, `GET /api/v1/developer/credentials/nfc_cards/tokens` |
-| Access Policies  | `GET/POST /api/v1/developer/access_policies`, `GET/PUT/DELETE /api/v1/developer/access_policies/{id}` |
-| Türen            | `GET /api/v1/developer/doors`, `POST /api/v1/developer/doors/{id}/unlock` |
+| Bereich          | Methode | Endpunkt                                                     |
+|------------------|---------|--------------------------------------------------------------|
+| Benutzer         | GET / POST | `/api/v1/developer/users`                                 |
+|                  | GET / PUT / DELETE | `/api/v1/developer/users/{id}`                    |
+| Zutrittsgruppen einer Person | PUT | `/api/v1/developer/users/{id}/access_policies`     |
+| Karte zuweisen   | PUT     | `/api/v1/developer/users/{id}/nfc_cards`                     |
+| Karte trennen    | PUT     | `/api/v1/developer/users/{id}/nfc_cards/delete`              |
+| Karten           | GET     | `/api/v1/developer/credentials/nfc_cards/tokens[/{token}]`   |
+| Access Policies  | GET / POST | `/api/v1/developer/access_policies`                       |
+|                  | GET / PUT / DELETE | `/api/v1/developer/access_policies/{id}`          |
+| Türen            | GET     | `/api/v1/developer/doors[/{id}]`                             |
+| Tür öffnen       | PUT     | `/api/v1/developer/doors/{id}/unlock`                        |
+
+## Wiederholungen und Duplikatschutz
+
+- Netzwerkfehler werden für **GET/PUT/DELETE** bis zu zweimal wiederholt.
+- **POST** (Person/Zutrittsgruppe anlegen) wird nur wiederholt, wenn die
+  Anfrage den Server nachweislich nie erreicht hat (Host nicht auflösbar,
+  Verbindung abgelehnt, keine Bytes gesendet). Bricht die Verbindung danach
+  ab, meldet der Client „Ergebnis unklar“ (`UniFiApiException::outcomeUnknown()`)
+  statt erneut zu senden – sonst könnten doppelte Personen/Gruppen entstehen.
+- Der AD-Sync prüft vor dem Anlegen einer Person zusätzlich live am
+  Controller (E-Mail, Personalnummer), ob sie bereits existiert.
+- UniFi-Sync und AD-Sync laufen pro Standort nie parallel (DB-Sperre
+  `GET_LOCK('uam_connection_<id>')`).
 
 ## Antwort-Envelope
 

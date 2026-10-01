@@ -7,7 +7,7 @@ namespace App\Services\Ldap;
 /**
  * Development / test LDAP source. Returns a small, deterministic Active
  * Directory dataset so the AD sync can be exercised without a real AD.
- * Activated automatically when LDAP_MOCK=true or ext-ldap is missing.
+ * Activated only when LDAP_MOCK=true and UNIFI_API_MOCK=true.
  */
 final class MockLdapClient implements LdapClientInterface
 {

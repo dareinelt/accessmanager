@@ -98,7 +98,7 @@ UniFi-API, danach wird der betroffene Cache-Eintrag aktualisiert
 │   │   └── Tls/                 TLS-Zertifikatsverwaltung + CertificateInspector
 │   └── Views/                   PHP-Templates (layouts/, auth/, pages/, partials/)
 ├── bin/cli.php                  CLI: migrate, seed, sync, ad:sync, tls:*, backup:run, …
-├── database/migrations/         SQL-Migrationen (001, 002, 003_ad_integration, 003_system_secrets)
+├── database/migrations/         SQL-Migrationen (001, 002, 003_ad_integration, 003_system_secrets, 004, 005)
 ├── docker/                      app-/web-Entrypoints, nginx.conf
 ├── docs/                        Fachdoku (architecture, api, database, deployment,
 │                                security, unifi-api, user-guide) + screenshots/
@@ -107,21 +107,20 @@ UniFi-API, danach wird der betroffene Cache-Eintrag aktualisiert
 ├── tests/run.php                Abhängigkeitsfreier Test-Runner
 ├── Dockerfile, docker-compose.yml, .env.example, .dockerignore, .gitattributes, .gitignore
 ├── README.md
-└── bug_report*.md, feature_request*.md, pull_request_template*.md, config.yml
-                                 GitHub-Vorlagen – liegen im Repo-Root, NICHT in .github/
+└── .github/                     GitHub-Vorlagen: ISSUE_TEMPLATE/ (Bug/Feature DE+EN, config.yml),
+                                 pull_request_template.md (DE), PULL_REQUEST_TEMPLATE/ (EN)
 ```
 
 Hinweise:
 
 - **[Fakt]** Es gibt **keinen** Ordner `database/seeds/`, `public/assets/images/`,
-  `app/Controllers/Web/` und **kein** `.github/`-Verzeichnis (frühere Doku-Stände
+  `app/Controllers/Web/` und **keine** Workflows unter `.github/` (frühere Doku-Stände
   behaupteten teils anderes).
 - **[Fakt]** `storage/tls/` wird erst zur Laufzeit von `TlsCertificateService::syncDisk()`
   angelegt; `storage/*` ist bis auf `.gitkeep` in `.gitignore`.
-- **[Abgeleitet]** Die GitHub-Vorlagen im Root (`config.yml` mit
-  `blank_issues_enabled: false`, Issue-/PR-Templates DE+EN) sind an dieser Stelle
-  für GitHub wirkungslos (erwartet: `.github/ISSUE_TEMPLATE/`,
-  `.github/pull_request_template.md`). Siehe [Offene Fragen](#25-offene-fragen).
+- **[Fakt]** Die GitHub-Vorlagen liegen unter `.github/ISSUE_TEMPLATE/`
+  (`config.yml` mit `blank_issues_enabled: false`) bzw. `.github/pull_request_template.md`;
+  die englische PR-Vorlage ist über `?template=pull_request_template_en.md` wählbar.
 
 ---
 
@@ -339,13 +338,19 @@ Vollständige Liste: `public/index.php` (Zeilen 19–118). Fachliche Beschreibun
 |---|---|
 | `database/migrations/001_initial.sql` | `roles`, `users`, `login_attempts`, `unifi_connections`, `unifi_users`, `unifi_credentials`, `unifi_access_groups`, `unifi_doors`, `audit_logs`, `sync_logs`, `app_settings` |
 | `database/migrations/002_tls_certificates.sql` | `tls_certificates` |
-| `database/migrations/003_ad_integration.sql` | `ad_group_mappings`; Spalten `ad_identifier`, `ad_member_of_json`, `ad_synced_at` an `unifi_users` (`ADD COLUMN IF NOT EXISTS`) |
+| `database/migrations/003_ad_integration.sql` | `ad_group_mappings` (Unique-Präfixindex auf DN wegen MySQL-Schlüssellimit); Spalten `ad_identifier`, `ad_member_of_json`, `ad_synced_at` an `unifi_users` |
 | `database/migrations/003_system_secrets.sql` | `system_secrets`; Rolle `sysadmin` |
+| `database/migrations/004_security_hardening.sql` | Index `idx_attempts_ip_time` an `login_attempts` |
+| `database/migrations/005_ad_offboarding.sql` | Spalte `ad_deactivated_at` an `unifi_users` |
 
 **[Fakt]** Der Runner (`bin/cli.php`) entfernt Zeilen, die mit `--` beginnen,
 splittet an `;` am Zeilenende und führt **jede Datei bei jedem Containerstart
-erneut** aus. Es gibt keine Migrations-Tracking-Tabelle → **jede Migration muss
-idempotent sein** (`CREATE TABLE IF NOT EXISTS`, `INSERT IGNORE`, `IF NOT EXISTS`).
+erneut** aus; ein Fehler bricht mit Meldung und Exit-Code 1 ab. Es gibt keine
+Migrations-Tracking-Tabelle → **jede Migration muss idempotent sein**
+(`CREATE TABLE IF NOT EXISTS`, `INSERT IGNORE`). Unterstützt: MariaDB 10.6+ **und
+MySQL 8.0** (geprüft). Spalten/Indizes nachträglich daher **nicht** mit
+`ADD COLUMN IF NOT EXISTS` (MariaDB-only), sondern per `information_schema`-Prüfung
++ `PREPARE/EXECUTE` (Muster: `005_ad_offboarding.sql`).
 
 ### 7.2 ER-Überblick
 
@@ -501,35 +506,41 @@ sequenceDiagram
 ```mermaid
 flowchart TD
     A[cron: php bin/cli.php sync<br/>oder POST /api/sync] --> B[syncAll: alle Verbindungen<br/>inkl. inaktive]
-    B --> C[sync_logs: start]
+    B --> L["GET_LOCK uam_connection_id<br/>(geteilt mit AD-Sync, max. 120 s warten)"]
+    L --> C[sync_logs: start]
     C --> D[UniFi: fetchAll users/credentials/access_policies<br/>Seitengröße 100 + doors]
-    D --> E["CacheRepository::clearConnection<br/>(DELETE je Tabelle, KEINE Transaktion)"]
-    E --> F[Upsert users, credentials, groups, doors]
-    F --> G[sync_logs: finish success/failed + Zähler]
+    D --> E["CacheRepository::replaceConnection<br/>(EINE Transaktion: Upsert + nur veraltete Zeilen löschen)"]
+    E --> G[sync_logs: finish success/failed + Zähler]
     D -- UniFiApiException --> G
 ```
 
-**[Abgeleitet]** Folgen von „erst löschen, dann einfügen“ ohne Transaktion:
-Leser sehen während des Syncs leere/teilweise Daten; bei Abbruch bleibt der Cache
-unvollständig bis zum nächsten erfolgreichen Sync; AD-Metadaten in `unifi_users`
-(`ad_identifier`, `ad_member_of_json`, `ad_synced_at`) werden bei **jedem**
-UniFi-Sync gelöscht und erst beim nächsten `ad:sync` neu geschrieben.
+**[Fakt]** Der Cache wird transaktional ersetzt: Leser sehen den alten Stand bis
+zum Commit, ein Abbruch rollt zurück, interne IDs bestehender Zeilen bleiben stabil.
+Die AD-Spalten in `unifi_users` (`ad_identifier`, `ad_member_of_json`,
+`ad_synced_at`, `ad_deactivated_at`) werden vom Upsert nicht berührt und überleben
+jeden UniFi-Sync.
 
 ### 8.4 AD-Synchronisation (`AdSyncService::run`)
 
 ```mermaid
 flowchart TD
-    S[uam-sync: ad:sync alle 300 s<br/>oder POST /api/ad/sync] --> L[LDAP: Benutzer + Gruppen laden<br/>paged 500, nur direkte memberOf]
-    L --> M[ad_group_mappings je Verbindung laden]
-    M --> P[Personen + Karten aus Cache<br/>page_size 100000]
-    P --> X{Abgleich je AD-Benutzer<br/>deaktivierte UAC 0x2 übersprungen}
-    X -->|match ad_identifier → E-Mail → Personalnummer| Y[Person vorhanden]
-    X -->|kein Treffer| Z[Person in UniFi anlegen<br/>status ACTIVE]
+    S[uam-sync: ad:sync alle 300 s<br/>oder POST /api/ad/sync] --> Q{LDAP-Quelle sicher?<br/>Mock nur mit UniFi-Mock,<br/>kein Mock-Fallback ohne ext-ldap}
+    Q -->|nein| E1[Abbruch ohne Schreibzugriff<br/>status error]
+    Q -->|ja| L[LDAP: Benutzer + Gruppen laden<br/>paged 500, nur direkte memberOf;<br/>deaktivierte UAC 0x2 fehlen]
+    L --> LK[je Verbindung GET_LOCK uam_connection_id]
+    LK --> M[ad_group_mappings je Verbindung laden]
+    M --> P[Personen inkl. ad_* aus Cache<br/>+ Karten]
+    P --> X{Abgleich je AD-Benutzer}
+    X -->|match ad_identifier → E-Mail → Personalnummer| Y[Person vorhanden<br/>ggf. reaktivieren, wenn ad_deactivated_at]
+    X -->|kein Cache-Treffer| LV{Live-Abgleich UniFi<br/>E-Mail/Personalnummer}
+    LV -->|Treffer| Y
+    LV -->|kein Treffer| Z[Person in UniFi anlegen<br/>status ACTIVE]
     Y --> K[Karte: card_number = freier Token oder display_id → zuweisen]
     Z --> K
     K --> G["Gruppen: gemappte (managed) Gruppen auf Soll setzen,<br/>nicht gemappte Gruppen bleiben"]
     G --> Meta[setUserAdMetadata]
-    Meta --> Aud[Audit ad.sync.run]
+    Meta --> R["Offboarding: Personen mit ad_identifier ohne aktives AD-Konto<br/>→ gemappte Gruppen entfernen + DEACTIVATED + ad_deactivated_at<br/>(nicht bei 0 AD-Benutzern, max. AD_SYNC_REVOKE_LIMIT)"]
+    R --> Aud[Audit ad.sync.revoke / ad.sync.run]
 ```
 
 ### 8.5 TLS-Zertifikat
@@ -580,9 +591,15 @@ Pfad in Session) → Bestätigung → Transaktion mit `FOREIGN_KEY_CHECKS=0`,
 - „Managed“ Gruppen = alle in Mappings referenzierten Policy-IDs der Verbindung.
   Nur diese werden hinzugefügt **und entfernt**; manuell vergebene, nicht gemappte
   Gruppen bleiben erhalten.
-- **[Fakt]** Deaktivierte AD-Konten werden übersprungen; Personen, die nicht (mehr)
-  im AD stehen, werden **nicht** angefasst. **[Abgeleitet]** Zugänge werden durch den
-  AD-Sync daher nie entzogen, wenn ein Konto deaktiviert oder gelöscht wird.
+- **[Fakt]** Offboarding: Personen, die schon einmal per AD verknüpft wurden
+  (`ad_identifier` gesetzt), deren AD-Konto aber deaktiviert oder gelöscht ist bzw.
+  nicht mehr im Filter liegt, verlieren alle gemappten Gruppen und werden in UniFi auf
+  `DEACTIVATED` gesetzt (`ad_deactivated_at` markiert). Kehrt das Konto zurück,
+  reaktiviert der Sync **nur** so markierte Personen; manuell deaktivierte bleiben aus.
+  Sicherheitsnetze: kein Entzug, wenn LDAP 0 aktive Benutzer liefert oder mehr als
+  `AD_SYNC_REVOKE_LIMIT` (Default 10, 0 = unbegrenzt) Personen je Standort betroffen wären.
+- **[Fakt]** Vor dem Anlegen prüft der AD-Sync live am Controller (E-Mail,
+  Personalnummer), um Duplikate bei veraltetem Cache zu vermeiden.
 - Drift-Report (`AdGroupMappingRepository::findNonCompliant`): Personen, die eine
   gemappte Gruppe besitzen, deren gespeichertes `ad_member_of_json` den DN aber
   nicht enthält.
@@ -622,11 +639,14 @@ CSV mit `;`, UTF-8-BOM, `page_size` 100000 (`ExportController`).
   `doors`, `doors/{id}/unlock`.
 - Antwort-Envelope `{code, msg, data, pagination}`; `code ≠ "SUCCESS"` → `UniFiApiException`.
 - HTTP 401/403/404/429 → deutsche Fehlermeldungen.
-- **Retries:** bis zu 2 Wiederholungen bei Netzwerkfehlern – für **alle** Methoden, auch POST.
+- **Retries:** bis zu 2 Wiederholungen bei Netzwerkfehlern für GET/PUT/DELETE; **POST**
+  nur, wenn die Anfrage nachweislich nie gesendet wurde (`UniFiApiClient::mayRetry`),
+  sonst `UniFiApiException` mit `outcomeUnknown() === true`.
 - `verify_ssl` pro Standort steuert `CURLOPT_SSL_VERIFYPEER/HOST` (Default: aus).
-- **[Unklar]** `docs/unifi-api.md` nennt teils andere HTTP-Methoden (z. B.
-  `POST …/doors/{id}/unlock`, `POST …/nfc_cards`) als der Code (`PUT`). Maßgeblich ist
-  der Code; Richtigkeit gegen echte Controller nicht verifizierbar.
+- **[Fakt]** HTTP-Methoden gegen die OpenAPI-Spezifikation
+  (`YuDefine/unifi-access-api-openapi`) geprüft: `users/{id}/nfc_cards`,
+  `users/{id}/nfc_cards/delete`, `users/{id}/access_policies` und `doors/{id}/unlock`
+  sind **PUT** – der Code ist korrekt, `docs/unifi-api.md` wurde angeglichen.
 
 ### 10.2 Mock-UniFi
 
@@ -636,8 +656,10 @@ CSV mit `;`, UTF-8-BOM, `page_size` 100000 (`ExportController`).
 
 ### 10.3 Active Directory / LDAP
 
-- `LdapClientFactory::create()`: `LDAP_MOCK=true` → `MockLdapClient`;
-  **ext-ldap fehlt → stillschweigend Mock** (nur Warn-Log).
+- `LdapClientFactory::create()`: `LDAP_MOCK=true` → `MockLdapClient` **nur** wenn auch
+  `UNIFI_API_MOCK=true`; sonst bzw. wenn ext-ldap fehlt → `UnavailableLdapClient`
+  (jeder Lesezugriff scheitert mit Begründung, der AD-Sync bricht vor Schreibzugriffen ab).
+  Zusätzlich verweigert `AdSyncService` einen `MockLdapClient` gegen echte Controller.
 - `LdapService`: StartTLS wenn `LDAP_USE_TLS` und Port ≠ 636, Paged Search (500),
   SID → String, Timeout 5 s, nur direkte `memberOf`.
 - Bind-Passwort: `LDAP_BIND_PASSWORD_ENC` (Crypto) hat Vorrang vor `LDAP_BIND_PASSWORD`.
@@ -664,7 +686,8 @@ Priorität (`app/Config/Config.php`): `.env` < `$_ENV` < `$_SERVER` < `getenv()`
 | `DB_HOST`, `DB_PORT`, `DB_DATABASE`, `DB_USERNAME`, `DB_PASSWORD`, `DB_ROOT_PASSWORD` | Datenbank |
 | `ADMIN_USERNAME`, `ADMIN_EMAIL`, `ADMIN_PASSWORD` | Default-Admin für `seed` |
 | `UNIFI_API_MOCK` | Mock-UniFi (Code-Default `false`, `.env.example`: `true`) |
-| `LDAP_MOCK`, `LDAP_HOST`, `LDAP_PORT` (Default 389), `LDAP_USE_TLS`, `LDAP_BASE_DN`, `LDAP_GROUP_BASE_DN`, `LDAP_USER_FILTER`, `LDAP_GROUP_FILTER`, `LDAP_BIND_DN`, `LDAP_BIND_PASSWORD`, `LDAP_BIND_PASSWORD_ENC`, `LDAP_CARD_ATTRIBUTE` (Default `employeeID`) | AD-Anbindung (`Config::ldap()`); `LDAP_CARD_ATTRIBUTE` = AD-Attribut mit der Kartennummer |
+| `LDAP_MOCK`, `LDAP_HOST`, `LDAP_PORT` (Default 389), `LDAP_USE_TLS`, `LDAP_BASE_DN`, `LDAP_GROUP_BASE_DN`, `LDAP_USER_FILTER`, `LDAP_GROUP_FILTER`, `LDAP_BIND_DN`, `LDAP_BIND_PASSWORD`, `LDAP_BIND_PASSWORD_ENC`, `LDAP_CARD_ATTRIBUTE` (Default `employeeID`) | AD-Anbindung (`Config::ldap()`); `LDAP_CARD_ATTRIBUTE` = AD-Attribut mit der Kartennummer; `LDAP_MOCK` wirkt nur zusammen mit `UNIFI_API_MOCK=true` |
+| `AD_SYNC_REVOKE_LIMIT` (Default 10, 0 = unbegrenzt) | Max. Personen je Standort und Lauf, denen der AD-Sync den Zugang entzieht; darüber wird der Entzug ausgesetzt |
 
 Laufzeit-Einstellungen in DB (`app_settings`), siehe §9.5.
 
@@ -730,7 +753,7 @@ Die Navigation in `app/Views/layouts/app.php` dupliziert diese Ränge.
 | CSRF | 419 `CSRF_MISMATCH` (API) bzw. Flash + Redirect (Web) | s. o. |
 | DB-Verbindung | Fehlertext ausgeben + `exit` (**Exit-Code 0** in CLI) | `app/Core/Database.php` |
 | Web-Controller | Exceptions (z. B. unbekannte Person in `personDetail`) landen im globalen Handler → HTML-500 | `PageController` |
-| UniFi | Netzwerkfehler → 2 Retries; HTTP-Fehler → deutsche Meldung | `UniFiApiClient::request` |
+| UniFi | Netzwerkfehler → 2 Retries (POST nur, wenn nicht gesendet; sonst `outcomeUnknown`); HTTP-Fehler → deutsche Meldung | `UniFiApiClient::request` |
 
 **Wichtig:** `Response::json/success/error/redirect/html` und `ApiController::success/error`
 beenden den Prozess (`never`). Code danach wird nie ausgeführt.
@@ -830,16 +853,18 @@ Release-Prozess, keine Image-Registry. Deployment = `docker compose` auf dem Zie
 ## 19. Gefahrenzonen
 
 ### 19.1 Cache-Ersetzung beim UniFi-Sync
-- **Ort:** `app/Services/SyncService.php::syncConnection`, `app/Repositories/CacheRepository.php::clearConnection`
-- **Warum kritisch:** Löscht alle Cache-Zeilen einer Verbindung ohne Transaktion und fügt neu ein.
-- **Was kann kaputtgehen:** leere/halbe Listen während des Syncs, Verlust der AD-Metadaten, falsche Drift-Reports, instabile IDs.
-- **Tests:** keine für diese Semantik. Manuell mit Mock prüfen; bei Änderung Transaktion/Upsert-Diff erwägen.
+- **Ort:** `app/Services/SyncService.php::syncConnection`, `app/Repositories/CacheRepository.php::replaceConnection`
+- **Warum kritisch:** ersetzt den kompletten Cache eines Standorts.
+- **Absicherung:** eine Transaktion (Upsert + Löschen nur veralteter Zeilen), AD-Spalten bleiben erhalten, `GET_LOCK uam_connection_<id>` verhindert parallele Läufe (auch mit dem AD-Sync).
+- **Was kann kaputtgehen:** Upsert-Spaltenlisten, die künftig AD-Spalten überschreiben; Sperre vergessen bei neuen Schreibpfaden.
+- **Tests:** „UniFi-Sync erhält AD-Metadaten und entfernt nur veraltete Zeilen“ in `tests/run.php`.
 
 ### 19.2 AD-Sync verändert echte Zutrittsrechte
 - **Ort:** `app/Services/AdSyncService.php`, `app/Services/Ldap/LdapClientFactory.php`, `docker-compose.yml` (`uam-sync`)
-- **Warum kritisch:** legt automatisch Personen an, weist Karten zu und **entfernt** gemappte Gruppen – alle 5 min.
-- **Was kann kaputtgehen:** Bei `LDAP_MOCK=true` (Default in `.env.example`) **und** `UNIFI_API_MOCK=false` werden Mock-AD-Benutzer auf echten Controllern angelegt. Fehlt ext-ldap, wird still auf Mock umgeschaltet. Falsche Mappings entziehen Zutritt. Matching per `ad_identifier` greift nicht (siehe §22).
-- **Tests:** `tests/run.php` (Abschnitt AdSyncService, nur Mock).
+- **Warum kritisch:** legt automatisch Personen an, weist Karten zu, **entfernt** gemappte Gruppen und **deaktiviert** Personen ohne aktives AD-Konto – alle 5 min.
+- **Absicherung:** Mock-LDAP nur gegen Mock-UniFi, kein stiller Mock-Fallback (`UnavailableLdapClient`); Offboarding nicht bei 0 AD-Benutzern und nur bis `AD_SYNC_REVOKE_LIMIT`; Reaktivierung nur bei `ad_deactivated_at`.
+- **Was kann kaputtgehen:** falsche Mappings oder ein zu enger `LDAP_USER_FILTER` entziehen Zutritt (bis zum Limit).
+- **Tests:** `tests/run.php` (Abschnitt AdSyncService, Factory-Schutz, Duplikatschutz, Offboarding; nur Mock).
 
 ### 19.3 Backup-Restore
 - **Ort:** `app/Services/BackupService.php::restore`, `app/Repositories/BackupRepository.php::restoreTables`
@@ -862,8 +887,8 @@ Release-Prozess, keine Image-Registry. Deployment = `docker compose` auf dem Zie
 ### 19.6 Migrationen
 - **Ort:** `database/migrations/`, Runner in `bin/cli.php`
 - **Warum kritisch:** laufen bei jedem Start, ohne Versionierung, teils parallel, mit naivem `;`-Split.
-- **Was kann kaputtgehen:** nicht-idempotente Statements brechen jeden Start; `;` innerhalb von Strings/Triggern; MySQL 8 unterstützt `ADD COLUMN IF NOT EXISTS` nicht; doppeltes Präfix `003_` macht die Reihenfolge nur alphabetisch eindeutig.
-- **Tests:** keine.
+- **Was kann kaputtgehen:** nicht-idempotente Statements brechen jeden Start (Runner bricht jetzt mit Exit 1 + Dateiname ab); `;` innerhalb von Strings/Triggern; MariaDB-only-Syntax (`ADD COLUMN IF NOT EXISTS`) bricht MySQL 8; Indizes > 3072 Byte brechen MySQL 8; doppeltes Präfix `003_` macht die Reihenfolge nur alphabetisch eindeutig.
+- **Tests:** Testlauf gegen MariaDB 11.4 und MySQL 8.0 (`php bin/cli.php migrate` zweimal + `php tests/run.php`).
 
 ### 19.7 Auth/Rollen/CSRF
 - **Ort:** `app/Security/Auth.php`, `app/Controllers/Api/ApiController.php`, `app/Views/layouts/app.php`, `app/Services/AppUserService.php`
@@ -873,9 +898,9 @@ Release-Prozess, keine Image-Registry. Deployment = `docker compose` auf dem Zie
 
 ### 19.8 UniFi-Client-Retries
 - **Ort:** `app/Api/UniFiApiClient.php::request`
-- **Warum kritisch:** POST wird bei Netzwerkfehlern wiederholt.
-- **Was kann kaputtgehen:** doppelte Personen/Gruppen in UniFi bei Timeouts nach erfolgreicher Verarbeitung.
-- **Tests:** keine (nur Mock).
+- **Warum kritisch:** Wiederholte POSTs können Duplikate (Personen/Gruppen) erzeugen.
+- **Absicherung:** POST wird nur wiederholt, wenn die Anfrage nachweislich nicht gesendet wurde; sonst `outcomeUnknown`-Fehler. Der AD-Sync prüft vor dem Anlegen live am Controller. Die UI sperrt Buttons während laufender Anfragen.
+- **Tests:** „UniFi-Client wiederholt POST nur, wenn die Anfrage nie gesendet wurde“, „AD-Sync legt keine Duplikate an, wenn der Cache hinterherhinkt“.
 
 ---
 
@@ -922,24 +947,24 @@ Release-Prozess, keine Image-Registry. Deployment = `docker compose` auf dem Zie
 
 | # | Thema | Ort | Art |
 |---|---|---|---|
-| 1 | `CatalogRepository::listPersons` selektiert `ad_identifier` nicht → AD-Matching per Identifier greift nie (Fallback E-Mail/Personalnummer) | `app/Repositories/CatalogRepository.php`, `app/Services/AdSyncService.php` | Bug **[Abgeleitet]** |
-| 2 | Cache-Ersetzung ohne Transaktion; löscht AD-Metadaten bei jedem UniFi-Sync | `CacheRepository::clearConnection` | Design |
+| 1 | ~~`ad_identifier` wurde beim AD-Matching nie gelesen~~ – behoben (`CacheRepository::personsForAdSync`) | `app/Services/AdSyncService.php` | erledigt |
+| 2 | ~~Cache-Ersetzung ohne Transaktion~~ – behoben (`replaceConnection`) | `CacheRepository` | erledigt |
 | 3 | Settings `sync_enabled`/`sync_interval_minutes` ohne Wirkung | `SettingsController`, `docker-compose.yml` | toter Code |
 | 4 | `login_attempts` wird nie bereinigt (`RateLimiter::prune()` ungenutzt) | `app/Auth/RateLimiter.php` | Wachstum |
-| 5 | POST-Retries im UniFi-Client | `UniFiApiClient::request` | Risiko Duplikate |
-| 6 | Migrationen ohne Versionierung, doppeltes Präfix `003_`, MariaDB-only-Syntax trotz MySQL-8-Kommentar | `database/migrations/`, `bin/cli.php` | Design |
+| 5 | ~~POST-Retries im UniFi-Client~~ – behoben (`mayRetry`) | `UniFiApiClient::request` | erledigt |
+| 6 | Migrationen ohne Versionierung, doppeltes Präfix `003_` (MySQL-8-Syntax behoben) | `database/migrations/`, `bin/cli.php` | Design |
 | 7 | Rolle in Session gecacht; Deaktivierung wirkt verzögert | `Auth::check` | Sicherheit |
 | 8 | `POST /logout` ohne CSRF-Prüfung | `AuthController::logout` | Sicherheit (gering) |
 | 9 | admin kann sysadmin vergeben / per Restore Rechte ausweiten | `AppUserService`, `BackupService` | Rechtemodell |
-| 10 | AD-Sync entzieht keine Rechte bei deaktivierten/gelöschten AD-Konten; nur direkte Gruppen | `AdSyncService`, `LdapService` | fachliche Lücke **[Abgeleitet]** |
-| 11 | Stiller Fallback auf Mock-LDAP ohne ext-ldap | `LdapClientFactory` | Risiko |
+| 10 | AD-Sync wertet nur direkte Gruppen aus (Entzug bei deaktivierten/gelöschten Konten ist umgesetzt) | `AdSyncService`, `LdapService` | fachliche Lücke **[Abgeleitet]** |
+| 11 | ~~Stiller Fallback auf Mock-LDAP ohne ext-ldap~~ – behoben (`UnavailableLdapClient`) | `LdapClientFactory` | erledigt |
 | 12 | `SiteService`-Validierung als `UniFiApiException` (400 statt 422) | `app/Services/SiteService.php` | Inkonsistenz |
 | 13 | Rollen-Ränge doppelt (Auth + Layout) | `Auth::RANK`, `layouts/app.php` | Duplikat |
 | 14 | DB-Verbindungsfehler beendet mit Exit-Code 0 | `app/Core/Database.php` | Betrieb |
 | 15 | Route-Parameter werden nicht URL-dekodiert | `app/Core/Router.php` | **[Abgeleitet]**, relevant bei Sonderzeichen in IDs/Tokens |
 | 16 | Keine Logrotation, keine CI, kein Linter | – | Betrieb |
 | 17 | Doku-Drift: `README.md`/`docs/user-guide.md` nennen `http://localhost:8080` (leitet auf `https://localhost:8443` um); `README.md` nennt `APP_SECRET` für Sessions; `docs/deployment.md` (4 Services, externer TLS-Proxy empfohlen, `storage/tls` fehlt); `docs/database.md` (Tabellenliste unvollständig); `docs/architecture.md` (`Controllers/Web` existiert nicht); `docs/api.md` (keine AD-/Systemgeheimnis-Endpunkte, 403 statt 419 für CSRF); `docs/unifi-api.md` (HTTP-Methoden, ~70 Karten) | `README.md`, `docs/*` | Doku |
-| 18 | GitHub-Vorlagen im Repo-Root wirkungslos | `bug_report*.md` u. a. | Ablage |
+| 18 | ~~GitHub-Vorlagen im Repo-Root wirkungslos~~ – nach `.github/` verschoben | `.github/` | erledigt |
 
 ---
 
@@ -982,16 +1007,19 @@ Release-Prozess, keine Image-Registry. Deployment = `docker compose` auf dem Zie
 
 | Frage | Stelle | Bekannt | Unklar | Warum relevant |
 |---|---|---|---|---|
-| Sind die UniFi-HTTP-Methoden (PUT vs. POST für unlock/nfc_cards) korrekt? | `app/Api/UniFiApiClient.php`, `docs/unifi-api.md` | Code nutzt PUT, Doku POST | Verhalten echter Controller/Firmware | Fehlfunktion im Echtbetrieb |
-| Soll `ad_identifier` beim Matching genutzt werden? | `CatalogRepository::listPersons`, `AdSyncService` | Feld wird gespeichert, aber nicht gelesen | Absicht vs. Bug | Fehl-Matches/Duplikate |
-| Sollen deaktivierte/entfernte AD-Konten Zutritt verlieren? | `AdSyncService` | werden übersprungen | fachliche Anforderung | Sicherheitslücke beim Offboarding |
 | Sollen `sync_enabled`/`sync_interval_minutes` wirken? | `SettingsController`, `docker-compose.yml` | UI speichert, niemand liest | geplantes Verhalten | Nutzer erwarten Wirkung |
 | Darf `admin` `sysadmin` vergeben/Backups einspielen? | `AppUserService`, `BackupController` | ist erlaubt | gewünschtes Rechtemodell | Rechteausweitung |
-| Wird MySQL 8 unterstützt? | `database/migrations/003_ad_integration.sql` | Kommentar sagt ja, Syntax MariaDB-only | Zielplattform | Migration bricht |
-| Wohin gehören die GitHub-Vorlagen? | Repo-Root | liegen im Root | ob `.github/` gewollt | Templates derzeit wirkungslos |
 | Herkunft aus `dareinelt/lanpa`? | frühere `agentsindex.md` | nur dort erwähnt | Umfang der Übernahme | Kontext für TLS-Code |
-| Ist der Mock-Default in `.env.example` (`UNIFI_API_MOCK=true`, `LDAP_MOCK=true`) für Produktion bewusst? | `.env.example` | Code-Default UniFi-Mock `false` | Deploy-Konvention | Gefahrenzone 19.2 |
+| Ist der Mock-Default in `.env.example` (`UNIFI_API_MOCK=true`, `LDAP_MOCK=true`) für Produktion bewusst? | `.env.example` | Code-Default UniFi-Mock `false`; LDAP-Mock gegen echte Controller wird inzwischen verweigert | Deploy-Konvention | Gefahrenzone 19.2 |
 | Wie soll Zeitzone/Zeitpunkt von Backups/Logs in Multi-Instanz-Betrieb gehandhabt werden? | `BackupService`, `app/bootstrap.php` | `APP_TIMEZONE` pro Container | Mehr-Instanz-Betrieb nicht vorgesehen | Skalierung **[Annahme]** |
+
+Geklärt:
+
+- **UniFi-HTTP-Methoden:** laut OpenAPI-Spezifikation PUT für Zuweisungen, Karten-Entfernen und Unlock; Code war korrekt, `docs/unifi-api.md` korrigiert.
+- **`ad_identifier` beim Matching:** wird jetzt genutzt (war ein Bug).
+- **Offboarding:** deaktivierte/gelöschte AD-Konten verlieren gemappte Gruppen, Person wird deaktiviert; automatische Reaktivierung bei Rückkehr (§9.3).
+- **MySQL 8:** war nicht lauffähig (MariaDB-Syntax, zu langer Unique-Index); behoben und gegen MySQL 8.0 getestet.
+- **GitHub-Vorlagen:** liegen jetzt in `.github/`.
 
 ---
 
