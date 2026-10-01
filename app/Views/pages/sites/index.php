@@ -60,7 +60,7 @@
 </template>
 
 <script>
-const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const esc = UAM.esc;
 
 document.getElementById('btn-site-create').addEventListener('click', () => {
     UAM.modal('Neuer Standort', document.getElementById('tpl-site-create').innerHTML);

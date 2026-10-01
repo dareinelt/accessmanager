@@ -85,7 +85,7 @@
 <script>
 const connections = <?= json_encode(array_map(static fn ($c) => ['id' => (int) $c['id'], 'name' => $c['name']], $connections), JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
 
-const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const esc = UAM.esc;
 
 function connectionOptions(selectedId) {
     return connections.map(c =>

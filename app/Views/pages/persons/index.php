@@ -3,8 +3,8 @@
 /** @var array $filters */
 /** @var array $connections */
 /** @var array $groups */
-$role = $currentUser['role'] ?? 'readonly';
-$canManage = in_array($role, ['admin', 'operator'], true);
+// FIX: role check by rank (sysadmin previously lost these controls).
+$canManage = \App\Security\Auth::hasRole(\App\Security\Auth::ROLE_OPERATOR);
 $items = $result['items'];
 $total = $result['total'];
 $page = (int) $filters['page'];

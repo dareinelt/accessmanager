@@ -14,19 +14,12 @@ use App\Security\Auth;
  */
 final class ExportController extends BaseController
 {
+    private const MAX_ROWS = 100000;
+
     public function persons(Request $request): void
     {
         Auth::requireLogin();
-        $filters = [
-            'connection_id' => $request->query('connection_id'),
-            'page' => 1,
-            'page_size' => 100000,
-            'search' => $request->query('search'),
-            'status' => $request->query('status'),
-            'group_id' => $request->query('group_id'),
-            'card_filter' => $request->query('card_filter'),
-            'sort' => $request->query('sort'),
-        ];
+        $filters = array_merge($this->personFilters($request), ['page' => 1, 'page_size' => self::MAX_ROWS]);
         $result = App::persons()->list($filters);
         $groupNames = $this->groupNameMap();
 
@@ -60,14 +53,7 @@ final class ExportController extends BaseController
     public function credentials(Request $request): void
     {
         Auth::requireLogin();
-        $filters = [
-            'connection_id' => $request->query('connection_id'),
-            'page' => 1,
-            'page_size' => 100000,
-            'search' => $request->query('search'),
-            'status' => $request->query('status'),
-            'card_filter' => $request->query('card_filter'),
-        ];
+        $filters = array_merge($this->credentialFilters($request), ['page' => 1, 'page_size' => self::MAX_ROWS]);
         $result = App::credentials()->list($filters);
 
         $rows = [];
@@ -97,9 +83,8 @@ final class ExportController extends BaseController
      */
     public function adNonCompliance(Request $request): void
     {
-        Auth::requireRole(Auth::ROLE_ADMIN, Auth::ROLE_OPERATOR);
-        $connectionId = $request->query('connection_id');
-        $rows = App::adMappings()->findNonCompliant($connectionId !== null && $connectionId !== '' ? (int) $connectionId : null);
+        Auth::requireRole(Auth::ROLE_OPERATOR);
+        $rows = App::adMappings()->findNonCompliant($request->queryInt('connection_id'));
 
         $data = [];
         foreach ($rows as $r) {
@@ -123,8 +108,8 @@ final class ExportController extends BaseController
     public function audit(Request $request): void
     {
         Auth::requireRole(Auth::ROLE_ADMIN);
-        $search = (string) $request->query('search', '');
-        $result = App::auditRepository()->list(1, 100000, $search !== '' ? $search : null);
+        $search = $request->queryString('search');
+        $result = App::auditRepository()->list(1, self::MAX_ROWS, $search);
 
         $rows = [];
         foreach ($result['items'] as $a) {
@@ -154,14 +139,30 @@ final class ExportController extends BaseController
     {
         header('Content-Type: text/csv; charset=utf-8');
         header('Content-Disposition: attachment; filename="' . $filename . '"');
+        header('Cache-Control: no-store');
+        header('X-Content-Type-Options: nosniff');
         $out = fopen('php://output', 'w');
         fwrite($out, "\xEF\xBB\xBF"); // UTF-8 BOM
-        fputcsv($out, $header, ';');
+        fputcsv($out, $header, ';', '"', '');
         foreach ($rows as $row) {
-            fputcsv($out, $row, ';');
+            fputcsv($out, array_map([self::class, 'csvCell'], $row), ';', '"', '');
         }
         fclose($out);
         exit;
+    }
+
+    /**
+     * SECURITY FIX (CSV/formula injection): cells starting with = + - @ TAB CR
+     * are executed as formulas by Excel/LibreOffice. Data originates from
+     * UniFi/AD/users, so such cells are prefixed with an apostrophe.
+     */
+    public static function csvCell(mixed $value): string
+    {
+        $value = (string) ($value ?? '');
+        if ($value !== '' && in_array($value[0], ['=', '+', '-', '@', "\t", "\r"], true)) {
+            return "'" . $value;
+        }
+        return $value;
     }
 
     /** @return array<string,string> */

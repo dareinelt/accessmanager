@@ -27,11 +27,7 @@ final class AuthController extends BaseController
 
     public function login(Request $request): void
     {
-        $token = $request->input('_csrf');
-        if (!Csrf::validate(is_string($token) ? $token : null)) {
-            $this->setFlash('error', 'Ihre Sitzung ist abgelaufen. Bitte erneut versuchen.');
-            Response::redirect('/login');
-        }
+        $this->requireFormCsrf($request, '/login');
 
         $result = App::auth()->login(
             (string) $request->input('username', ''),
@@ -49,7 +45,10 @@ final class AuthController extends BaseController
 
     public function logout(Request $request): void
     {
-        App::auth()->logout();
+        // SECURITY FIX: logout is a state-changing POST and was not CSRF
+        // protected (forced logout by any third-party page).
+        $this->requireFormCsrf($request, Auth::check() ? '/dashboard' : '/login');
+        App::auth()->logout($request->ip());
         Response::redirect('/login');
     }
 }

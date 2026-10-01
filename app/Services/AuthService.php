@@ -21,11 +21,15 @@ final class AuthService
     public function login(string $username, string $password, string $ip): array
     {
         $identifier = mb_strtolower(trim($username));
-        if ($identifier === '') {
+        if ($identifier === '' || $password === '') {
             return ['success' => false, 'error' => 'Bitte Benutzernamen und Passwort eingeben.'];
         }
+        // FIX: over-long input used to overflow the audit/rate-limit columns
+        // (VARCHAR) and caused a 500 error instead of a normal failed login.
+        $identifier = mb_substr($identifier, 0, 255);
 
-        if (RateLimiter::tooManyAttempts($identifier)) {
+        // SECURITY FIX: additional per-IP limit against password spraying.
+        if (RateLimiter::tooManyAttempts($identifier) || RateLimiter::tooManyAttemptsFromIp($ip)) {
             return ['success' => false, 'locked' => true, 'error' => 'Zu viele Fehlversuche. Bitte warten Sie 15 Minuten.'];
         }
 
@@ -43,11 +47,12 @@ final class AuthService
         return ['success' => true];
     }
 
-    public function logout(): void
+    public function logout(?string $ip = null): void
     {
         if (Auth::check()) {
-            $this->audit->log('auth.logout', 'auth', null, Auth::username(), null, null, Auth::id(), Auth::username());
+            $this->audit->log('auth.logout', 'auth', null, Auth::username(), null, null, Auth::id(), Auth::username(), $ip);
         }
-        Session::destroy();
+        Session::restart();
+        Auth::forget();
     }
 }

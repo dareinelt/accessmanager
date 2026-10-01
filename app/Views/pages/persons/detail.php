@@ -2,8 +2,9 @@
 /** @var array $detail */
 /** @var array $groups */
 /** @var array $freeCards */
-$role = $currentUser['role'] ?? 'readonly';
-$canManage = in_array($role, ['admin', 'operator'], true);
+// FIX: role check by rank (sysadmin previously lost these controls).
+$canManage = \App\Security\Auth::hasRole(\App\Security\Auth::ROLE_OPERATOR);
+$isAdmin = \App\Security\Auth::hasRole(\App\Security\Auth::ROLE_ADMIN);
 
 $person = $detail['person'];
 $credentials = $detail['credentials'];
@@ -43,7 +44,7 @@ $pin = $raw['pin_code'] ?? '';
             <div class="detail-row"><span class="detail-key">Nachname</span><span><?= e($person['last_name'] ?? '—') ?></span></div>
             <div class="detail-row"><span class="detail-key">E-Mail</span><span><?= e($person['email'] ?? '—') ?></span></div>
             <div class="detail-row"><span class="detail-key">Mitarbeiternummer</span><span class="mono"><?= e($person['employee_number'] ?? '—') ?></span></div>
-            <div class="detail-row"><span class="detail-key">PIN-Code</span><span class="mono"><?= $pin !== '' && $pin !== null ? e($pin) : '—' ?></span></div>
+            <div class="detail-row"><span class="detail-key">PIN-Code</span><span class="mono"><?php if (!empty($detail['redacted'])): ?><span class="muted">verborgen</span><?php else: ?><?= $pin !== '' && $pin !== null ? e((string) $pin) : '—' ?><?php endif; ?></span></div>
             <div class="detail-row">
                 <span class="detail-key">Status</span>
                 <span>
@@ -129,7 +130,7 @@ $pin = $raw['pin_code'] ?? '';
     <?php endif; ?>
 </div>
 
-<?php if ($role === 'admin'): ?>
+<?php if ($isAdmin && !empty($raw)): ?>
 <details class="card">
     <summary style="cursor:pointer;font-weight:700;">Rohdaten (UniFi)</summary>
     <pre class="mono" style="overflow:auto;max-height:300px;"><?= e(json_encode($raw, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)) ?></pre>

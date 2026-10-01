@@ -66,15 +66,19 @@ final class SiteService
     /** @return array<string,mixed> */
     public function create(array $data, ?int $userId = null, ?string $username = null): array
     {
-        $this->validate($data);
-        $id = $this->connections->create(
-            name: trim((string) $data['name']),
-            host: trim((string) $data['host']),
-            port: (int) ($data['port'] ?? 12445),
-            token: trim((string) $data['api_token']),
-            verifySsl: (bool) ($data['verify_ssl'] ?? false),
-        );
-        $this->audit->log('site.create', 'site', (string) $id, trim((string) $data['name']), userId: $userId, username: $username);
+        $clean = $this->normalize($data, true);
+        try {
+            $id = $this->connections->create(
+                name: $clean['name'],
+                host: $clean['host'],
+                port: $clean['port'] ?? 12445,
+                token: $clean['api_token'],
+                verifySsl: $clean['verify_ssl'] ?? false,
+            );
+        } catch (\PDOException $exception) {
+            $this->rethrowDuplicate($exception);
+        }
+        $this->audit->log('site.create', 'site', (string) $id, $clean['name'], userId: $userId, username: $username);
 
         return $this->get($id);
     }
@@ -86,11 +90,16 @@ final class SiteService
         if ($connection === null) {
             throw new UniFiApiException('Standort wurde nicht gefunden.');
         }
-        if (array_key_exists('port', $data) && ($data['port'] < 1 || $data['port'] > 65535)) {
-            throw new UniFiApiException('Der Port muss zwischen 1 und 65535 liegen.');
+        // FIX: update() previously skipped validation (empty name/host,
+        // non-numeric port, raw booleans -> SQL error) and a duplicate name
+        // ended in HTTP 500.
+        $clean = $this->normalize($data, false);
+        try {
+            $this->connections->update($id, $clean);
+        } catch (\PDOException $exception) {
+            $this->rethrowDuplicate($exception);
         }
-        $this->connections->update($id, $data);
-        $this->audit->log('site.update', 'site', (string) $id, $connection['name'], userId: $userId, username: $username);
+        $this->audit->log('site.update', 'site', (string) $id, $clean['name'] ?? $connection['name'], userId: $userId, username: $username);
 
         return $this->get($id);
     }
@@ -123,20 +132,61 @@ final class SiteService
         }
     }
 
-    private function validate(array $data): void
+    /**
+     * Validate and normalise connection input. On update ($requireAll=false)
+     * only the supplied fields are checked.
+     *
+     * @return array<string,mixed>
+     */
+    private function normalize(array $data, bool $requireAll): array
     {
-        if (empty(trim((string) ($data['name'] ?? '')))) {
-            throw new UniFiApiException('Bitte einen Namen für den Standort angeben.');
+        $clean = [];
+        if ($requireAll || array_key_exists('name', $data)) {
+            $name = is_scalar($data['name'] ?? null) ? trim((string) $data['name']) : '';
+            if ($name === '' || mb_strlen($name) > 128) {
+                throw new UniFiApiException('Bitte einen Namen für den Standort angeben (max. 128 Zeichen).');
+            }
+            $clean['name'] = $name;
         }
-        if (empty(trim((string) ($data['host'] ?? '')))) {
-            throw new UniFiApiException('Bitte den Hostnamen bzw. die IP-Adresse des Controllers angeben.');
+        if ($requireAll || array_key_exists('host', $data)) {
+            $host = is_scalar($data['host'] ?? null) ? trim((string) $data['host']) : '';
+            // Host or IP only – no scheme, path or whitespace.
+            if ($host === '' || strlen($host) > 255 || preg_match('/^[A-Za-z0-9.\-:\[\]]+$/', $host) !== 1) {
+                throw new UniFiApiException('Bitte den Hostnamen bzw. die IP-Adresse des Controllers angeben (ohne https:// und Pfad).');
+            }
+            $clean['host'] = $host;
         }
-        $port = (int) ($data['port'] ?? 12445);
-        if ($port < 1 || $port > 65535) {
-            throw new UniFiApiException('Der Port muss zwischen 1 und 65535 liegen.');
+        if ($requireAll || array_key_exists('port', $data)) {
+            $port = filter_var($data['port'] ?? 12445, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1, 'max_range' => 65535]]);
+            if ($port === false) {
+                throw new UniFiApiException('Der Port muss zwischen 1 und 65535 liegen.');
+            }
+            $clean['port'] = $port;
         }
-        if (empty(trim((string) ($data['api_token'] ?? '')))) {
+        $token = is_scalar($data['api_token'] ?? null) ? trim((string) $data['api_token']) : '';
+        if ($requireAll && $token === '') {
             throw new UniFiApiException('Bitte einen UniFi-API-Token angeben.');
         }
+        if ($token !== '') {
+            $clean['api_token'] = $token;
+        }
+        foreach (['verify_ssl', 'is_active'] as $flag) {
+            if (array_key_exists($flag, $data)) {
+                $clean[$flag] = filter_var($data[$flag], FILTER_VALIDATE_BOOLEAN);
+            }
+        }
+        if (array_key_exists('is_active', $clean)) {
+            $clean['is_active'] = $clean['is_active'] ? 1 : 0;
+        }
+
+        return $clean;
+    }
+
+    private function rethrowDuplicate(\PDOException $exception): never
+    {
+        if ($exception->getCode() === '23000') {
+            throw new UniFiApiException('Ein Standort mit diesem Namen existiert bereits.');
+        }
+        throw $exception;
     }
 }

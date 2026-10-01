@@ -49,7 +49,9 @@ final class Config
             }
         }
         foreach ($_SERVER as $k => $v) {
-            if (is_string($v)) {
+            // SECURITY FIX: request headers (HTTP_*) are client-controlled and
+            // must never be able to shadow configuration values.
+            if (is_string($v) && !str_starts_with((string) $k, 'HTTP_')) {
                 $items[$k] = $v;
             }
         }

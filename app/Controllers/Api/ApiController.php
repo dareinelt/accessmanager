@@ -10,7 +10,6 @@ use App\Core\Logger;
 use App\Core\Request;
 use App\Core\Response;
 use App\Security\Auth;
-use App\Security\Csrf;
 
 /**
  * Base for JSON API controllers. Every response uses the {success,data}
@@ -41,13 +40,12 @@ abstract class ApiController extends BaseController
 
     protected function requireCsrf(Request $request): void
     {
-        $token = $request->header('x-csrf-token') ?: $request->input('_csrf');
-        if (!Csrf::validate(is_string($token) ? $token : null)) {
+        if (!$this->csrfValid($request)) {
             $this->error('Ungültiges oder fehlendes CSRF-Token', 'CSRF_MISMATCH', 419);
         }
     }
 
-    /** @return array{userId:int,username:string} */
+    /** @return array{0:int,1:string} [userId, username] */
     protected function actor(): array
     {
         return [Auth::id(), Auth::username()];
@@ -66,7 +64,7 @@ abstract class ApiController extends BaseController
         } catch (\InvalidArgumentException $e) {
             $this->error($e->getMessage(), 'VALIDATION', 422);
         } catch (\Throwable $e) {
-            Logger::error('api', $e->getMessage());
+            Logger::error('api', $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
             $this->error('Unerwarteter Serverfehler', 'SERVER_ERROR', 500);
         }
     }

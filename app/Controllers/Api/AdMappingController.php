@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Controllers\Api;
 
 use App\Core\App;
+use App\Core\Logger;
 use App\Core\Request;
 use App\Security\Auth;
 
@@ -14,13 +15,13 @@ use App\Security\Auth;
  */
 final class AdMappingController extends ApiController
 {
-    private const MANAGE = [Auth::ROLE_ADMIN, Auth::ROLE_OPERATOR];
+    private const MANAGE = [Auth::ROLE_OPERATOR];
 
     public function list(Request $request): never
     {
         $this->authorize($request);
-        $connectionId = $request->query('connection_id');
-        $this->run(fn () => App::adMappings()->list($connectionId !== null && $connectionId !== '' ? (int) $connectionId : null));
+        $connectionId = $request->queryInt('connection_id');
+        $this->run(fn () => App::adMappings()->list($connectionId));
     }
 
     /** AD groups for the autocomplete dropdown. */
@@ -30,7 +31,9 @@ final class AdMappingController extends ApiController
         try {
             $this->success(App::ldap()->getGroups());
         } catch (\Throwable $e) {
-            $this->error('AD-Gruppen konnten nicht geladen werden: ' . $e->getMessage(), 'LDAP_ERROR', 502);
+            // SECURITY FIX: do not leak LDAP/server internals to the client.
+            Logger::error('ldap', $e->getMessage());
+            $this->error('AD-Gruppen konnten nicht geladen werden. Details siehe Server-Log.', 'LDAP_ERROR', 502);
         }
     }
 
@@ -104,10 +107,10 @@ final class AdMappingController extends ApiController
         $this->authorize($request, ...self::MANAGE);
         $this->requireCsrf($request);
         [$userId, $username] = $this->actor();
-        $connectionId = $request->input('connection_id');
+        $connectionId = filter_var($request->input('connection_id'), FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
 
         $this->run(fn () => App::ad()->run(
-            $connectionId !== null && $connectionId !== '' ? (int) $connectionId : null,
+            $connectionId === false ? null : $connectionId,
             $userId,
             $username,
         ));
@@ -117,8 +120,8 @@ final class AdMappingController extends ApiController
     public function nonCompliant(Request $request): never
     {
         $this->authorize($request);
-        $connectionId = $request->query('connection_id');
-        $this->run(fn () => App::adMappings()->findNonCompliant($connectionId !== null && $connectionId !== '' ? (int) $connectionId : null));
+        $connectionId = $request->queryInt('connection_id');
+        $this->run(fn () => App::adMappings()->findNonCompliant($connectionId));
     }
 
     /** @return array{0:int,1:string,2:?string,3:string} */

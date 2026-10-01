@@ -77,7 +77,8 @@ final class Router
             if (!preg_match($route['regex'], $path, $matches)) {
                 continue;
             }
-            $params = array_filter($matches, 'is_string', ARRAY_FILTER_USE_KEY);
+            // FIX: path parameters were passed URL-encoded (e.g. IDs with spaces or %2F).
+            $params = array_map('rawurldecode', array_filter($matches, 'is_string', ARRAY_FILTER_USE_KEY));
             $this->invoke($route['handler'], $params, $request);
             return true;
         }

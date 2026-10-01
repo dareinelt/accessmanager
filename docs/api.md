@@ -131,7 +131,8 @@ Schreibbare Schlüssel: `sync_enabled`, `sync_interval_minutes`,
 
 ## Backup & Wiederherstellung (Web, keine JSON-API)
 
-Alle Routen erfordern die Rolle `admin` (bzw. `sysadmin`).
+Alle Routen erfordern die Rolle `sysadmin` (Backups enthalten sämtliche
+Benutzer-Hashes und verschlüsselte Geheimnisse).
 
 | Methode | Pfad | Beschreibung |
 |---------|------|--------------|

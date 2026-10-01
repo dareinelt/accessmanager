@@ -12,14 +12,8 @@ final class CredentialController extends ApiController
     public function list(Request $request): never
     {
         $this->authorize($request);
-        $filters = [
-            'connection_id' => $request->query('connection_id'),
-            'page' => (int) $request->query('page', 1),
-            'page_size' => (int) $request->query('page_size', 25),
-            'search' => $request->query('search'),
-            'status' => $request->query('status'),
-            'card_filter' => $request->query('card_filter'),
-        ];
+        // FIX: page_size was unbounded (DoS via ?page_size=10000000).
+        $filters = $this->credentialFilters($request);
         $this->run(fn () => App::credentials()->list($filters));
     }
 

@@ -1,20 +1,23 @@
 <?php
 /** @var array $users */
-$roleLabels = ['sysadmin' => 'Systemadministrator', 'admin' => 'Administrator', 'operator' => 'Operator', 'readonly' => 'Nur Lesen'];
+/** @var array<string,string> $assignableRoles */
+/** @var bool $isSysadmin */
+/** @var int $currentUserId */
+$roleLabels = \App\Security\Role::labels();
 ?>
 <div class="page-head">
     <div>
         <h1 class="page-title">Benutzer</h1>
         <p class="page-sub">Lokale Anmeldekonten für dieses Verwaltungssystem.</p>
     </div>
-    <button class="btn btn-primary" id="btn-user-create">Neuer Benutzer</button>
+    <button type="button" class="btn btn-primary" id="btn-user-create">Neuer Benutzer</button>
 </div>
 
 <div class="card">
     <div class="table-wrap">
         <table class="table">
             <thead>
-                <tr><th>Benutzername</th><th>E-Mail</th><th>Rolle</th><th>Status</th><th>Letzter Login</th><th></th></tr>
+                <tr><th scope="col">Benutzername</th><th scope="col">E-Mail</th><th scope="col">Rolle</th><th scope="col">Status</th><th scope="col">Letzter Login</th><th scope="col"><span class="sr-only">Aktionen</span></th></tr>
             </thead>
             <tbody>
                 <?php foreach ($users as $u): ?>
@@ -28,13 +31,24 @@ $roleLabels = ['sysadmin' => 'Systemadministrator', 'admin' => 'Administrator', 
                         </td>
                         <td class="nowrap"><?= e(format_date($u['last_login_at'])) ?></td>
                         <td class="nowrap">
-                            <button class="btn btn-sm" data-user='<?= e(json_encode($u, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)) ?>' onclick="editUser(JSON.parse(this.dataset.user))">Bearbeiten</button>
-                            <button class="btn btn-sm btn-danger"
-                                data-api="/api/users/<?= (int) $u['id'] ?>"
-                                data-method="DELETE"
-                                data-confirm="Benutzer „<?= e($u['username']) ?>“ löschen?"
-                                data-success="Benutzer gelöscht."
-                                data-redirect="/users">Löschen</button>
+                            <?php
+                            // SECURITY FIX: admins can no longer manage sysadmin accounts (enforced server-side, mirrored here).
+                            $manageable = $isSysadmin || $u['role'] !== 'sysadmin';
+                            $isSelf = (int) $u['id'] === $currentUserId;
+                            ?>
+                            <?php if ($manageable): ?>
+                                <button type="button" class="btn btn-sm js-user-edit" data-user="<?= e(json_encode($u, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)) ?>" data-self="<?= $isSelf ? '1' : '0' ?>">Bearbeiten</button>
+                                <?php if (!$isSelf): ?>
+                                    <button type="button" class="btn btn-sm btn-danger"
+                                        data-api="/api/users/<?= (int) $u['id'] ?>"
+                                        data-method="DELETE"
+                                        data-confirm="Benutzer „<?= e($u['username']) ?>“ löschen?"
+                                        data-success="Benutzer gelöscht."
+                                        data-redirect="/users">Löschen</button>
+                                <?php endif; ?>
+                            <?php else: ?>
+                                <span class="muted">Nur Systemadministrator</span>
+                            <?php endif; ?>
                         </td>
                     </tr>
                 <?php endforeach; ?>
@@ -50,14 +64,13 @@ $roleLabels = ['sysadmin' => 'Systemadministrator', 'admin' => 'Administrator', 
     <form data-json-form data-method="POST" data-action="/api/users">
         <label class="field"><span class="field-label">Benutzername</span><input class="input" name="username" required></label>
         <label class="field"><span class="field-label">E-Mail</span><input class="input" type="email" name="email" required></label>
-        <label class="field"><span class="field-label">Passwort (min. 10 Zeichen)</span><input class="input" type="password" name="password" minlength="10" required></label>
+        <label class="field"><span class="field-label">Passwort (min. 10 Zeichen)</span><input class="input" type="password" name="password" minlength="10" autocomplete="new-password" required></label>
         <label class="field">
             <span class="field-label">Rolle</span>
             <select class="input" name="role">
-                <option value="readonly">Nur Lesen</option>
-                <option value="operator">Operator</option>
-                <option value="admin">Administrator</option>
-                <option value="sysadmin">Systemadministrator</option>
+                <?php foreach (array_reverse($assignableRoles, true) as $value => $label): ?>
+                    <option value="<?= e($value) ?>"><?= e($label) ?></option>
+                <?php endforeach; ?>
             </select>
         </label>
         <button type="submit" class="btn btn-primary btn-block">Anlegen</button>
@@ -65,25 +78,32 @@ $roleLabels = ['sysadmin' => 'Systemadministrator', 'admin' => 'Administrator', 
 </template>
 
 <script>
-const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const ASSIGNABLE_ROLES = <?= json_encode(array_reverse($assignableRoles, true), JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_UNICODE) ?>;
+const esc = UAM.esc;
+
+document.querySelectorAll('.js-user-edit').forEach(btn => {
+    btn.addEventListener('click', () => editUser(JSON.parse(btn.dataset.user), btn.dataset.self === '1'));
+});
 
 document.getElementById('btn-user-create').addEventListener('click', () => {
     UAM.modal('Neuer Benutzer', document.getElementById('tpl-user-create').innerHTML);
 });
 
-function editUser(u) {
-    const roles = [['readonly','Nur Lesen'],['operator','Operator'],['admin','Administrator'],['sysadmin','Systemadministrator']];
+function editUser(u, isSelf) {
+    const roles = Object.entries(ASSIGNABLE_ROLES);
+    // Own role / active state cannot be changed (enforced server-side).
+    const lock = isSelf ? ' disabled' : '';
     const html =
         '<form id="user-edit-form">' +
         '  <label class="field"><span class="field-label">E-Mail</span><input class="input" type="email" name="email" required value="' + esc(u.email) + '"></label>' +
-        '  <label class="field"><span class="field-label">Rolle</span><select class="input" name="role">' +
-        roles.map(r => '<option value="' + r[0] + '" ' + (u.role === r[0] ? 'selected' : '') + '>' + r[1] + '</option>').join('') +
+        '  <label class="field"><span class="field-label">Rolle</span><select class="input" name="role"' + lock + '>' +
+        roles.map(r => '<option value="' + esc(r[0]) + '" ' + (u.role === r[0] ? 'selected' : '') + '>' + esc(r[1]) + '</option>').join('') +
         '  </select></label>' +
-        '  <label class="field"><span class="field-label">Neues Passwort (leer lassen, um zu behalten)</span><input class="input" type="password" name="password" minlength="10"></label>' +
-        '  <label class="checkbox"><input type="checkbox" name="is_active" ' + (Number(u.is_active) === 1 ? 'checked' : '') + '> Konto aktiv</label>' +
+        '  <label class="field"><span class="field-label">Neues Passwort (leer lassen, um zu behalten)</span><input class="input" type="password" name="password" minlength="10" autocomplete="new-password"></label>' +
+        '  <label class="checkbox"><input type="checkbox" name="is_active"' + lock + ' ' + (Number(u.is_active) === 1 ? 'checked' : '') + '> Konto aktiv</label>' +
         '  <button type="submit" class="btn btn-primary btn-block mt">Speichern</button>' +
         '</form>';
-    const m = UAM.modal('Benutzer bearbeiten – ' + esc(u.username), html);
+    const m = UAM.modal('Benutzer bearbeiten – ' + u.username, html);
     const form = m.el.querySelector('#user-edit-form');
     form.addEventListener('submit', async (e) => {
         e.preventDefault();

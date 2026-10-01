@@ -100,7 +100,7 @@ final class CatalogRepository
             $where[] = '(cr.user_unifi_id IS NOT NULL AND cr.user_unifi_id != "")';
         }
         if (!empty($filters['search'])) {
-            $like = '%' . $filters['search'] . '%';
+            $like = '%' . self::escapeLike((string) $filters['search']) . '%';
             $where[] = '(cr.display_id LIKE :s1 OR cr.unifi_token LIKE :s2 OR cr.alias LIKE :s3 OR u.full_name LIKE :s4)';
             $params['s1'] = $like;
             $params['s2'] = $like;
@@ -262,7 +262,8 @@ final class CatalogRepository
         }
         if (!empty($filters['group_id'])) {
             $where[] = 'u.access_policy_ids_json LIKE :gid';
-            $params['gid'] = '%"' . $filters['group_id'] . '"%';
+            // FIX: LIKE wildcards (% _) in the group id are escaped.
+            $params['gid'] = '%"' . self::escapeLike((string) $filters['group_id']) . '"%';
         }
         if (($filters['card_filter'] ?? null) === 'assigned') {
             $where[] = 'EXISTS (SELECT 1 FROM unifi_credentials cr WHERE cr.connection_id = u.connection_id AND cr.user_unifi_id = u.unifi_id)';
@@ -271,7 +272,7 @@ final class CatalogRepository
             $where[] = 'NOT EXISTS (SELECT 1 FROM unifi_credentials cr WHERE cr.connection_id = u.connection_id AND cr.user_unifi_id = u.unifi_id)';
         }
         if (!empty($filters['search'])) {
-            $like = '%' . $filters['search'] . '%';
+            $like = '%' . self::escapeLike((string) $filters['search']) . '%';
             $where[] = '(u.full_name LIKE :s1 OR u.first_name LIKE :s2 OR u.last_name LIKE :s3 OR u.email LIKE :s4 OR u.employee_number LIKE :s5
                 OR EXISTS (SELECT 1 FROM unifi_credentials cr WHERE cr.connection_id = u.connection_id AND cr.user_unifi_id = u.unifi_id
                     AND (cr.display_id LIKE :s6 OR cr.unifi_token LIKE :s7)))';
@@ -285,6 +286,12 @@ final class CatalogRepository
         }
 
         return [$where ? 'WHERE ' . implode(' AND ', $where) : '', $params];
+    }
+
+    /** Escape LIKE meta characters so user input matches literally. */
+    public static function escapeLike(string $value): string
+    {
+        return addcslashes($value, '\\%_');
     }
 
     private function personOrder(?string $sort): string

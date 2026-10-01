@@ -7,7 +7,12 @@ namespace App\Controllers;
 use App\Config\Config;
 use App\Core\App;
 use App\Core\Request;
+use App\Core\Response;
+use App\Repositories\SyncLogRepository;
 use App\Security\Auth;
+use App\Security\Role;
+use App\Services\AppUserService;
+use App\Services\PersonService;
 use App\Services\SystemSecretService;
 
 /**
@@ -27,17 +32,7 @@ final class PageController extends BaseController
     public function persons(Request $request): void
     {
         Auth::requireLogin();
-        $connectionId = $request->query('connection_id');
-        $filters = [
-            'connection_id' => $connectionId,
-            'page' => max(1, (int) $request->query('page', 1)),
-            'page_size' => min(100, max(1, (int) $request->query('page_size', 25))),
-            'search' => $request->query('search'),
-            'status' => $request->query('status'),
-            'group_id' => $request->query('group_id'),
-            'card_filter' => $request->query('card_filter'),
-            'sort' => $request->query('sort'),
-        ];
+        $filters = $this->personFilters($request);
         $this->render('persons/index', 'persons', [
             'result' => App::persons()->list($filters),
             'filters' => $filters,
@@ -49,10 +44,22 @@ final class PageController extends BaseController
     public function personDetail(Request $request, array $params): void
     {
         Auth::requireLogin();
-        $connectionId = (int) $params['connection_id'];
-        $unifiId = (string) $params['unifi_id'];
+        $connectionId = (int) ($params['connection_id'] ?? 0);
+        $unifiId = (string) ($params['unifi_id'] ?? '');
+        try {
+            $detail = App::persons()->get($connectionId, $unifiId);
+        } catch (\RuntimeException $exception) {
+            // FIX: an unknown person ID used to end in an uncaught exception (HTTP 500).
+            $this->setFlash('error', 'Die Person wurde nicht gefunden. Möglicherweise wurde sie inzwischen gelöscht.');
+            Response::redirect('/persons');
+        }
+        // SECURITY FIX: PIN codes and raw controller payloads are only shown
+        // to roles that are allowed to manage persons.
+        if (!Auth::hasRole(Auth::ROLE_OPERATOR)) {
+            $detail = PersonService::redactForReadonly($detail);
+        }
         $this->render('persons/detail', 'persons', [
-            'detail' => App::persons()->get($connectionId, $unifiId),
+            'detail' => $detail,
             'groups' => App::groups()->list($connectionId),
             'freeCards' => App::credentials()->list(['connection_id' => $connectionId, 'card_filter' => 'free', 'page_size' => 1000])['items'],
         ]);
@@ -61,14 +68,7 @@ final class PageController extends BaseController
     public function credentials(Request $request): void
     {
         Auth::requireLogin();
-        $filters = [
-            'connection_id' => $request->query('connection_id'),
-            'page' => max(1, (int) $request->query('page', 1)),
-            'page_size' => min(100, max(1, (int) $request->query('page_size', 25))),
-            'search' => $request->query('search'),
-            'status' => $request->query('status'),
-            'card_filter' => $request->query('card_filter'),
-        ];
+        $filters = $this->credentialFilters($request);
         $this->render('cards/index', 'cards', [
             'result' => App::credentials()->list($filters),
             'filters' => $filters,
@@ -79,22 +79,24 @@ final class PageController extends BaseController
     public function groups(Request $request): void
     {
         Auth::requireLogin();
-        $connectionId = $request->query('connection_id');
+        // FIX: "Alle Standorte" (connection_id='') was cast to 0 and showed an empty list.
+        $connectionId = $request->queryInt('connection_id');
         $this->render('groups/index', 'groups', [
-            'groups' => App::groups()->list($connectionId !== null ? (int) $connectionId : null),
+            'groups' => App::groups()->list($connectionId),
             'connections' => App::sites()->list(),
-            'doors' => App::doors()->list($connectionId !== null ? (int) $connectionId : null),
-            'selectedConnection' => $connectionId !== null ? (int) $connectionId : null,
+            'doors' => App::doors()->list($connectionId),
+            'selectedConnection' => $connectionId,
         ]);
     }
 
     public function doors(Request $request): void
     {
         Auth::requireLogin();
-        $connectionId = $request->query('connection_id');
+        $connectionId = $request->queryInt('connection_id');
         $this->render('doors/index', 'doors', [
-            'doors' => App::doors()->list($connectionId !== null ? (int) $connectionId : null),
+            'doors' => App::doors()->list($connectionId),
             'connections' => App::sites()->list(),
+            'selectedConnection' => $connectionId,
         ]);
     }
 
@@ -108,19 +110,20 @@ final class PageController extends BaseController
 
     public function sync(Request $request): void
     {
-        Auth::requireRole(Auth::ROLE_ADMIN, Auth::ROLE_OPERATOR);
+        Auth::requireRole(Auth::ROLE_OPERATOR);
+        $log = new SyncLogRepository();
         $this->render('sync/index', 'sync', [
-            'recent' => (new \App\Repositories\SyncLogRepository())->recent(25),
-            'lastSuccess' => (new \App\Repositories\SyncLogRepository())->lastSuccessful(),
-            'lastFailed' => (new \App\Repositories\SyncLogRepository())->lastFailed(),
+            'recent' => $log->recent(25),
+            'lastSuccess' => $log->lastSuccessful(),
+            'lastFailed' => $log->lastFailed(),
         ]);
     }
 
     public function audit(Request $request): void
     {
         Auth::requireRole(Auth::ROLE_ADMIN);
-        $page = max(1, (int) $request->query('page', 1));
-        $search = (string) $request->query('search', '');
+        $page = $request->queryInt('page') ?? 1;
+        $search = (string) $request->queryString('search');
         $this->render('audit/index', 'audit', [
             'result' => App::auditRepository()->list($page, 50, $search !== '' ? $search : null),
             'filters' => ['page' => $page, 'search' => $search],
@@ -132,6 +135,9 @@ final class PageController extends BaseController
         Auth::requireRole(Auth::ROLE_ADMIN);
         $this->render('settings/users', 'settings', [
             'users' => App::appUsers()->list(),
+            'assignableRoles' => AppUserService::assignableRoles(Auth::roleEnum()),
+            'isSysadmin' => Auth::roleEnum() === Role::Sysadmin,
+            'currentUserId' => Auth::id(),
         ]);
     }
 
@@ -161,7 +167,7 @@ final class PageController extends BaseController
 
     public function adMappings(Request $request): void
     {
-        Auth::requireRole(Auth::ROLE_ADMIN, Auth::ROLE_OPERATOR);
+        Auth::requireRole(Auth::ROLE_OPERATOR);
         $this->render('ad_mappings/index', 'ad-mappings', [
             'mappings' => App::adMappings()->list(),
             'connections' => App::sites()->list(),

@@ -10,13 +10,17 @@ use App\Core\Request;
 use App\Core\Response;
 use App\Core\Session;
 use App\Security\Auth;
-use App\Security\Csrf;
 use InvalidArgumentException;
 
 /**
  * „Backup & Wiederherstellung“: On-Demand-Download, geplante/automatisch
  * gespeicherte Archive sowie die Wiederherstellung aus einer JSON-Datei
- * (Vorschau + Bestätigung). Zugriff nur für Administratoren.
+ * (Vorschau + Bestätigung).
+ *
+ * SECURITY FIX: Zugriff nur noch für Systemadministratoren. Backups enthalten
+ * Passwort-Hashes und verschlüsselte Secrets; eine Wiederherstellung kann
+ * Benutzerkonten (inkl. Rolle „sysadmin“) einspielen. Für Administratoren war
+ * das bisher eine Rechteausweitung.
  */
 final class BackupController extends BaseController
 {
@@ -25,13 +29,13 @@ final class BackupController extends BaseController
 
     public function index(Request $request): void
     {
-        Auth::requireRole(Auth::ROLE_ADMIN);
+        Auth::requireRole(Auth::ROLE_SYSADMIN);
         $this->render($request);
     }
 
     public function download(Request $request): void
     {
-        Auth::requireRole(Auth::ROLE_ADMIN);
+        Auth::requireRole(Auth::ROLE_SYSADMIN);
         App::audit()->log('backup.download', 'backup', null, 'Backup heruntergeladen', username: Auth::username());
         $filename = 'backup_' . date('Ymd_His') . '_' . $this->slug(Auth::username()) . '.json';
         header('Content-Type: application/json; charset=utf-8');
@@ -43,7 +47,7 @@ final class BackupController extends BaseController
 
     public function downloadFile(Request $request, array $params): void
     {
-        Auth::requireRole(Auth::ROLE_ADMIN);
+        Auth::requireRole(Auth::ROLE_SYSADMIN);
         $path = App::backup()->filePath((string) ($params['filename'] ?? ''));
         if ($path === null) {
             $this->setFlash('error', 'Das Archiv wurde nicht gefunden.');
@@ -59,8 +63,8 @@ final class BackupController extends BaseController
 
     public function create(Request $request): void
     {
-        Auth::requireRole(Auth::ROLE_ADMIN);
-        $this->requireCsrf($request);
+        Auth::requireRole(Auth::ROLE_SYSADMIN);
+        $this->requireFormCsrf($request, '/backup');
 
         $metadata = App::backup()->createArchiveFile(Auth::username());
         App::audit()->log('backup.create', 'backup', $metadata['filename'], 'Backup-Archiv erstellt', username: Auth::username());
@@ -70,8 +74,8 @@ final class BackupController extends BaseController
 
     public function delete(Request $request): void
     {
-        Auth::requireRole(Auth::ROLE_ADMIN);
-        $this->requireCsrf($request);
+        Auth::requireRole(Auth::ROLE_SYSADMIN);
+        $this->requireFormCsrf($request, '/backup');
 
         $filename = (string) $request->input('filename', '');
         App::backup()->deleteFile($filename);
@@ -82,37 +86,37 @@ final class BackupController extends BaseController
 
     public function previewRestore(Request $request): void
     {
-        Auth::requireRole(Auth::ROLE_ADMIN);
-        $this->requireCsrf($request);
+        Auth::requireRole(Auth::ROLE_SYSADMIN);
+        $this->requireFormCsrf($request, '/backup');
 
-        $file = $_FILES['backup_file'] ?? ['error' => UPLOAD_ERR_NO_FILE];
-        $error = (int) ($file['error'] ?? UPLOAD_ERR_NO_FILE);
-        if ($error !== UPLOAD_ERR_OK) {
-            $this->restoreError($error === UPLOAD_ERR_NO_FILE
-                ? 'Bitte wählen Sie eine Backup-Datei (.json) aus.'
-                : 'Die Datei konnte nicht hochgeladen werden.');
+        $name = $this->uploadName('backup_file');
+        try {
+            $raw = $this->readUpload('backup_file');
+        } catch (InvalidArgumentException $exception) {
+            $this->restoreError($exception->getMessage());
         }
-        $name = strtolower((string) ($file['name'] ?? ''));
+        if ($raw === null) {
+            $this->restoreError('Bitte wählen Sie eine Backup-Datei (.json) aus.');
+        }
         if (!str_ends_with($name, '.json')) {
             $this->restoreError('Bitte wählen Sie eine Backup-Datei im JSON-Format (.json) aus.');
         }
-        $tmp = (string) ($file['tmp_name'] ?? '');
-        $raw = is_uploaded_file($tmp) || is_file($tmp) ? (string) file_get_contents($tmp) : '';
         if ($raw === '') {
             $this->restoreError('Die hochgeladene Datei ist leer.');
         }
 
         try {
-            $snapshot = App::backup()->decode($raw);
+            App::backup()->decode($raw);
         } catch (InvalidArgumentException $exception) {
             $this->restoreError($exception->getMessage());
         }
 
+        $this->discardPending();
         $pendingPath = App::backup()->storageDir() . '/.pending_' . bin2hex(random_bytes(8)) . '.json';
         file_put_contents($pendingPath, $raw);
         Session::put(self::PENDING_PATH, $pendingPath);
         Session::put(self::PENDING_META, [
-            'filename' => (string) ($file['name'] ?? ''),
+            'filename' => (string) ($_FILES['backup_file']['name'] ?? ''),
             'size' => strlen($raw),
         ]);
 
@@ -121,8 +125,8 @@ final class BackupController extends BaseController
 
     public function confirmRestore(Request $request): void
     {
-        Auth::requireRole(Auth::ROLE_ADMIN);
-        $this->requireCsrf($request);
+        Auth::requireRole(Auth::ROLE_SYSADMIN);
+        $this->requireFormCsrf($request, '/backup');
 
         $pendingPath = Session::get(self::PENDING_PATH);
         $raw = is_string($pendingPath) && is_file($pendingPath) ? (string) file_get_contents($pendingPath) : '';
@@ -147,8 +151,8 @@ final class BackupController extends BaseController
 
     public function discardRestore(Request $request): void
     {
-        Auth::requireRole(Auth::ROLE_ADMIN);
-        $this->requireCsrf($request);
+        Auth::requireRole(Auth::ROLE_SYSADMIN);
+        $this->requireFormCsrf($request, '/backup');
         $this->discardPending();
         $this->setFlash('success', 'Die Wiederherstellung wurde abgebrochen. Es wurde nichts geändert.');
         Response::redirect('/backup');
@@ -169,15 +173,6 @@ final class BackupController extends BaseController
         $this->discardPending();
         $this->setFlash('error', $message);
         Response::redirect('/backup');
-    }
-
-    private function requireCsrf(Request $request): void
-    {
-        $token = $request->input('_csrf');
-        if (!Csrf::validate(is_string($token) ? $token : null)) {
-            $this->setFlash('error', 'Ihre Sitzung ist abgelaufen. Bitte erneut versuchen.');
-            Response::redirect('/backup');
-        }
     }
 
     /** @param array<string,mixed> $data */

@@ -1,8 +1,8 @@
 <?php
 /** @var array $doors */
 /** @var array $connections */
-$role = $currentUser['role'] ?? 'readonly';
-$canUnlock = in_array($role, ['admin', 'operator'], true);
+// FIX: role check by rank (sysadmin previously lost these controls).
+$canUnlock = \App\Security\Auth::hasRole(\App\Security\Auth::ROLE_OPERATOR);
 $selected = isset($_GET['connection_id']) ? (int) $_GET['connection_id'] : null;
 ?>
 <div class="page-head">

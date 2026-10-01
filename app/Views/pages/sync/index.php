@@ -2,8 +2,8 @@
 /** @var array $recent */
 /** @var array|null $lastSuccess */
 /** @var array|null $lastFailed */
-$role = $currentUser['role'] ?? 'readonly';
-$canRun = in_array($role, ['admin', 'operator'], true);
+// FIX: role check by rank (sysadmin previously lost these controls).
+$canRun = \App\Security\Auth::hasRole(\App\Security\Auth::ROLE_OPERATOR);
 ?>
 <div class="page-head">
     <div>

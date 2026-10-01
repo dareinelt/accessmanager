@@ -50,6 +50,21 @@ final class PersonService
         ];
     }
 
+    /**
+     * SECURITY FIX: strip door PIN codes and the raw controller payload from
+     * person details for read-only users (previously visible to everyone).
+     *
+     * @param array<string,mixed> $detail
+     * @return array<string,mixed>
+     */
+    public static function redactForReadonly(array $detail): array
+    {
+        unset($detail['person']['raw_json']);
+        $detail['raw'] = [];
+        $detail['redacted'] = true;
+        return $detail;
+    }
+
     /** @return array<string,mixed> */
     public function create(int $connectionId, array $data, ?int $userId = null, ?string $username = null): array
     {
