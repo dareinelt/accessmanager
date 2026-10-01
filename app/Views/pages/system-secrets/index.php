@@ -28,8 +28,9 @@
                         </td>
                         <td class="nowrap"><?= e(format_date($s['updated_at'])) ?></td>
                         <td class="nowrap">
-                            <button class="btn btn-sm" onclick="revealSecret(<?= (int) $s['id'] ?>, '<?= e($s['key']) ?>')">Anzeigen</button>
-                            <button class="btn btn-sm" onclick="editSecret(<?= (int) $s['id'] ?>)">Bearbeiten</button>
+                            <?php /* SECURITY FIX: no user data inside inline JS handlers (HTML-escaping is not JS-escaping). */ ?>
+                            <button type="button" class="btn btn-sm js-secret-reveal" data-id="<?= (int) $s['id'] ?>" data-key="<?= e($s['key']) ?>">Anzeigen</button>
+                            <button type="button" class="btn btn-sm js-secret-edit" data-id="<?= (int) $s['id'] ?>">Bearbeiten</button>
                             <button class="btn btn-sm btn-danger"
                                 data-api="/api/system-secrets/<?= (int) $s['id'] ?>"
                                 data-method="DELETE"
@@ -65,8 +66,15 @@
 </template>
 
 <script>
-const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const esc = UAM.esc;
 const categories = <?= json_encode($categories, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
+
+document.querySelectorAll('.js-secret-reveal').forEach(btn => {
+    btn.addEventListener('click', () => revealSecret(btn.dataset.id, btn.dataset.key));
+});
+document.querySelectorAll('.js-secret-edit').forEach(btn => {
+    btn.addEventListener('click', () => editSecret(btn.dataset.id));
+});
 
 document.getElementById('btn-secret-create').addEventListener('click', () => {
     UAM.modal('Neuer Eintrag', document.getElementById('tpl-secret-create').innerHTML);
@@ -75,7 +83,7 @@ document.getElementById('btn-secret-create').addEventListener('click', () => {
 async function revealSecret(id, key) {
     try {
         const res = await UAM.api('POST', '/api/system-secrets/' + id + '/reveal');
-        UAM.modal('Wert von „' + esc(key) + '“',
+        UAM.modal('Wert von „' + key + '“',
             '<label class="field"><span class="field-label">Entschlüsselter Wert</span><textarea class="input mono" rows="5" readonly>' + esc(res.value) + '</textarea></label>' +
             '<p class="muted">Der Zugriff wird im Audit-Log protokolliert.</p>');
     } catch (err) {

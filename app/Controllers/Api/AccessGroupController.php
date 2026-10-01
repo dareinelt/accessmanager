@@ -10,13 +10,14 @@ use App\Security\Auth;
 
 final class AccessGroupController extends ApiController
 {
-    private const MANAGE = [Auth::ROLE_ADMIN, Auth::ROLE_OPERATOR];
+    private const MANAGE = [Auth::ROLE_OPERATOR];
 
     public function list(Request $request): never
     {
         $this->authorize($request);
-        $connectionId = $request->query('connection_id');
-        $this->run(fn () => App::groups()->list($connectionId !== null ? (int) $connectionId : null));
+        // FIX: connection_id='' was cast to 0 and returned an empty list.
+        $connectionId = $request->queryInt('connection_id');
+        $this->run(fn () => App::groups()->list($connectionId));
     }
 
     public function detail(Request $request, array $params): never
@@ -31,7 +32,12 @@ final class AccessGroupController extends ApiController
         $this->requireCsrf($request);
         [$userId, $username] = $this->actor();
         $data = $request->all();
-        $this->run(fn () => App::groups()->create((int) $data['connection_id'], $data, $userId, $username));
+        // FIX: a missing connection_id raised an "undefined array key" warning.
+        $connectionId = filter_var($data['connection_id'] ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+        if ($connectionId === false) {
+            $this->error('Bitte einen Standort auswählen.', 'VALIDATION', 422);
+        }
+        $this->run(fn () => App::groups()->create($connectionId, $data, $userId, $username));
     }
 
     public function update(Request $request, array $params): never

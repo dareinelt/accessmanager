@@ -7,31 +7,27 @@ namespace App\Controllers\Api;
 use App\Core\App;
 use App\Core\Request;
 use App\Security\Auth;
+use App\Services\PersonService;
 
 final class PersonController extends ApiController
 {
-    private const MANAGE = [Auth::ROLE_ADMIN, Auth::ROLE_OPERATOR];
+    private const MANAGE = [Auth::ROLE_OPERATOR];
 
     public function list(Request $request): never
     {
         $this->authorize($request);
-        $filters = [
-            'connection_id' => $request->query('connection_id'),
-            'page' => (int) $request->query('page', 1),
-            'page_size' => (int) $request->query('page_size', 25),
-            'search' => $request->query('search'),
-            'status' => $request->query('status'),
-            'group_id' => $request->query('group_id'),
-            'card_filter' => $request->query('card_filter'),
-            'sort' => $request->query('sort'),
-        ];
+        $filters = $this->personFilters($request);
         $this->run(fn () => App::persons()->list($filters));
     }
 
     public function detail(Request $request, array $params): never
     {
         $this->authorize($request);
-        $this->run(fn () => App::persons()->get((int) $params['connection_id'], (string) $params['unifi_id']));
+        $this->run(function () use ($params) {
+            $detail = App::persons()->get((int) $params['connection_id'], (string) $params['unifi_id']);
+            // SECURITY FIX: no PIN codes / raw payload for read-only users.
+            return Auth::hasRole(...self::MANAGE) ? $detail : PersonService::redactForReadonly($detail);
+        });
     }
 
     public function create(Request $request): never
@@ -40,7 +36,12 @@ final class PersonController extends ApiController
         $this->requireCsrf($request);
         [$userId, $username] = $this->actor();
         $data = $request->all();
-        $this->run(fn () => App::persons()->create((int) $data['connection_id'], $data, $userId, $username));
+        // FIX: a missing connection_id raised an "undefined array key" warning.
+        $connectionId = filter_var($data['connection_id'] ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+        if ($connectionId === false) {
+            $this->error('Bitte einen Standort auswählen.', 'VALIDATION', 422);
+        }
+        $this->run(fn () => App::persons()->create($connectionId, $data, $userId, $username));
     }
 
     public function update(Request $request, array $params): never
@@ -93,7 +94,7 @@ final class PersonController extends ApiController
         [$userId, $username] = $this->actor();
         $policyIds = (array) $request->input('access_policy_ids', []);
         $this->run(function () use ($params, $policyIds, $userId, $username) {
-            App::persons()->setGroups((int) $params['connection_id'], (string) $params['unifi_id'], array_values(array_map('strval', $policyIds)), $userId, $username);
+            App::persons()->setGroups((int) $params['connection_id'], (string) $params['unifi_id'], array_values(array_map('strval', array_filter($policyIds, 'is_scalar'))), $userId, $username);
             return ['updated' => true];
         });
     }

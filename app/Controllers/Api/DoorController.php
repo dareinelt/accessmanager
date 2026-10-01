@@ -13,13 +13,13 @@ final class DoorController extends ApiController
     public function list(Request $request): never
     {
         $this->authorize($request);
-        $connectionId = $request->query('connection_id');
-        $this->run(fn () => App::doors()->list($connectionId !== null ? (int) $connectionId : null));
+        $connectionId = $request->queryInt('connection_id');
+        $this->run(fn () => App::doors()->list($connectionId));
     }
 
     public function unlock(Request $request, array $params): never
     {
-        $this->authorize($request, Auth::ROLE_ADMIN, Auth::ROLE_OPERATOR);
+        $this->authorize($request, Auth::ROLE_OPERATOR);
         $this->requireCsrf($request);
         [$userId, $username] = $this->actor();
         $this->run(function () use ($params, $userId, $username) {

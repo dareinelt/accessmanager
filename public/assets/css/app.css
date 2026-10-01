@@ -315,7 +315,7 @@ table.table { width: 100%; border-collapse: collapse; }
 .filters .search { flex: 1; min-width: 220px; }
 
 /* ------------------------------------------------------------ Pagination */
-.pagination { display: flex; gap: 6px; align-items: center; justify-content: flex-end; margin-top: 16px; }
+.pagination { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; justify-content: flex-end; margin-top: 16px; }
 .pagination a, .pagination span {
     padding: 6px 11px;
     border: 1px solid var(--border);
@@ -384,4 +384,63 @@ table.table { width: 100%; border-collapse: collapse; }
     .sidebar-foot { padding: 14px 0; }
     .sidebar-foot-row { justify-content: center; }
     .detail-grid { grid-template-columns: 1fr; }
+}
+
+/* ------------------------------------------------- Accessibility (audit) */
+.skip-link {
+    position: absolute;
+    left: 12px;
+    top: -48px;
+    z-index: 2000;
+    background: var(--primary);
+    color: #fff;
+    padding: 10px 14px;
+    border-radius: 8px;
+    text-decoration: none;
+    font-weight: 600;
+}
+.skip-link:focus { top: 12px; }
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+a:focus-visible,
+button:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+input:focus-visible,
+summary:focus-visible,
+[tabindex]:focus-visible {
+    outline: 3px solid #2563eb;
+    outline-offset: 2px;
+}
+.main:focus { outline: none; }
+.flash { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.flash-close {
+    background: none;
+    border: 0;
+    color: inherit;
+    font-size: 20px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0 4px;
+}
+.modal-title { margin: 0; font-size: 16px; font-weight: 700; }
+
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { transition: none !important; animation: none !important; }
+}
+
+@media (max-width: 560px) {
+    .page-head { flex-direction: column; align-items: stretch; gap: 12px; }
+    .filters { flex-direction: column; align-items: stretch; }
+    .filters .search { min-width: 0; }
+    .pagination { justify-content: center; }
 }

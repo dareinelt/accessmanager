@@ -10,7 +10,6 @@ use App\Core\Request;
 use App\Core\Response;
 use App\Core\Session;
 use App\Security\Auth;
-use App\Security\Csrf;
 use App\Services\Tls\TlsCertificateService;
 use InvalidArgumentException;
 
@@ -33,7 +32,7 @@ final class CertificateController extends BaseController
     public function createRequest(Request $request): void
     {
         Auth::requireRole(Auth::ROLE_ADMIN);
-        $this->requireCsrf($request);
+        $this->requireFormCsrf($request, '/certificates');
 
         $fields = ['common_name', 'san', 'organization', 'organizational_unit', 'locality', 'state', 'country', 'email', 'key_type'];
         $input = [];
@@ -75,20 +74,19 @@ final class CertificateController extends BaseController
     public function previewImport(Request $request): void
     {
         Auth::requireRole(Auth::ROLE_ADMIN);
-        $this->requireCsrf($request);
+        $this->requireFormCsrf($request, '/certificates');
 
         $raw = (string) ($request->input('certificate_text', ''));
-        $file = $_FILES['certificate_file'] ?? ['error' => UPLOAD_ERR_NO_FILE];
-        $error = (int) ($file['error'] ?? UPLOAD_ERR_NO_FILE);
-        if ($error === UPLOAD_ERR_OK) {
-            $name = strtolower((string) ($file['name'] ?? ''));
-            if (preg_match('/\.(pem|crt|cer)$/', $name) !== 1) {
+        try {
+            $uploaded = $this->readUpload('certificate_file', 262144);
+        } catch (InvalidArgumentException $exception) {
+            $this->importError($exception->getMessage());
+        }
+        if ($uploaded !== null) {
+            if (preg_match('/\.(pem|crt|cer)$/', $this->uploadName('certificate_file')) !== 1) {
                 $this->importError('Bitte eine Datei im Format PEM oder CRT auswählen (.pem, .crt).');
             }
-            $tmp = (string) ($file['tmp_name'] ?? '');
-            $raw = is_uploaded_file($tmp) || is_file($tmp) ? (string) file_get_contents($tmp, false, null, 0, 262145) : '';
-        } elseif ($error !== UPLOAD_ERR_NO_FILE) {
-            $this->importError('Die Datei konnte nicht hochgeladen werden.');
+            $raw = $uploaded;
         }
 
         try {
@@ -104,7 +102,7 @@ final class CertificateController extends BaseController
     public function confirmImport(Request $request): void
     {
         Auth::requireRole(Auth::ROLE_ADMIN);
-        $this->requireCsrf($request);
+        $this->requireFormCsrf($request, '/certificates');
 
         $pending = Session::get(self::PENDING_KEY);
         Session::forget(self::PENDING_KEY);
@@ -131,7 +129,7 @@ final class CertificateController extends BaseController
     public function discardImport(Request $request): void
     {
         Auth::requireRole(Auth::ROLE_ADMIN);
-        $this->requireCsrf($request);
+        $this->requireFormCsrf($request, '/certificates');
         Session::forget(self::PENDING_KEY);
         $this->setFlash('success', 'Der Import wurde abgebrochen. Es wurde nichts geändert.');
         Response::redirect('/certificates');
@@ -140,7 +138,7 @@ final class CertificateController extends BaseController
     public function activate(Request $request): void
     {
         Auth::requireRole(Auth::ROLE_ADMIN);
-        $this->requireCsrf($request);
+        $this->requireFormCsrf($request, '/certificates');
         $id = (int) $request->input('id', 0);
 
         try {
@@ -159,7 +157,7 @@ final class CertificateController extends BaseController
     public function deactivate(Request $request): void
     {
         Auth::requireRole(Auth::ROLE_ADMIN);
-        $this->requireCsrf($request);
+        $this->requireFormCsrf($request, '/certificates');
         App::tls()->deactivate();
 
         App::audit()->log('certificate.deactivate', 'certificate', '', 'Zertifikat deaktiviert', username: Auth::username());
@@ -171,7 +169,7 @@ final class CertificateController extends BaseController
     public function delete(Request $request): void
     {
         Auth::requireRole(Auth::ROLE_ADMIN);
-        $this->requireCsrf($request);
+        $this->requireFormCsrf($request, '/certificates');
 
         try {
             App::tls()->deleteRequest((int) $request->input('id', 0));
@@ -189,15 +187,6 @@ final class CertificateController extends BaseController
         Session::forget(self::PENDING_KEY);
         $this->setFlash('error', $message);
         Response::redirect('/certificates');
-    }
-
-    private function requireCsrf(Request $request): void
-    {
-        $token = $request->input('_csrf');
-        if (!Csrf::validate(is_string($token) ? $token : null)) {
-            $this->setFlash('error', 'Ihre Sitzung ist abgelaufen. Bitte erneut versuchen.');
-            Response::redirect('/certificates');
-        }
     }
 
     /**

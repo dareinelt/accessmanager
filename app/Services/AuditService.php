@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use App\Core\Request;
 use App\Repositories\AuditRepository;
 
 /**
@@ -31,6 +32,8 @@ final class AuditService
         if ($connectionId !== null) {
             $details = array_merge($details ?? [], ['connection_id' => $connectionId]);
         }
+        // FIX: the client IP was only recorded for login events.
+        $ip ??= PHP_SAPI === 'cli' ? null : Request::clientIp($_SERVER);
         $this->audit->log(
             action: $action,
             entityType: $entityType,

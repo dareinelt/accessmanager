@@ -5,19 +5,40 @@
 
 ## Authentifizierung & Session
 
-- Lokale Anmeldung gegen `users` (Passwort-Hash via `password_hash`/`password_verify`).
-- Session-Cookie: `HttpOnly`, `SameSite=Lax`, `Secure` bei HTTPS, konfigurierbare
-  Lebensdauer (`SESSION_LIFETIME`) und Name (`SESSION_NAME`).
-- Session-Regenerierung (`session_regenerate_id(true)`) bei erfolgreichem Login.
+- Lokale Anmeldung gegen `users`; neue Passwörter werden mit **Argon2id**
+  gehasht (`Auth::hashPassword()`, Fallback `PASSWORD_DEFAULT`), alte Hashes
+  werden beim Login per `password_needs_rehash` migriert. Unbekannte
+  Benutzernamen durchlaufen ebenfalls `password_verify` (Timing-Schutz).
+- Session-Cookie: `HttpOnly`, `SameSite=Lax`, `Secure` bei HTTPS, Name
+  `SESSION_NAME`; `session.use_strict_mode` verhindert Session-Fixation.
+- `SESSION_LIFETIME` ist ein **Inaktivitäts-Timeout** in Sekunden
+  (mindestens 300); danach wird die Session serverseitig beendet.
+- Session-Regenerierung (`session_regenerate_id(true)`) bei erfolgreichem Login,
+  vollständige Neuanlage der Session beim Logout.
+- Der angemeldete Benutzer wird bei **jedem Request** aus der Datenbank
+  nachgeladen: deaktivierte/gelöschte Konten werden sofort abgemeldet,
+  Rollenänderungen greifen unmittelbar.
+- Logout erfolgt ausschließlich per POST mit CSRF-Token.
+- Client-IP: `X-Forwarded-For`/`X-Forwarded-Proto` werden nur von Proxys aus
+  `TRUSTED_PROXIES` akzeptiert (Schutz vor IP-Spoofing in Audit-Log und
+  Rate-Limiter).
 
 ## Autorisierung / Rollen
 
 | Rolle       | Rechte                                                              |
 |-------------|---------------------------------------------------------------------|
-| `sysadmin`  | Höchste Stufe: zusätzlich Zugriff auf Systemgeheimnisse              |
-| `admin`     | Vollzugriff inkl. Standorte, Audit, Benutzer, Einstellungen          |
+| `sysadmin`  | Höchste Stufe: zusätzlich Systemgeheimnisse und Backup/Restore       |
+| `admin`     | Standorte, Audit, Benutzer, Einstellungen, Zertifikate               |
 | `operator`  | Personen/Karten/Gruppen/Türen verwalten, Synchronisation ausführen   |
-| `readonly`  | Nur Lesen                                                           |
+| `readonly`  | Nur Lesen (PIN-Codes und sensible Personendaten werden maskiert)     |
+
+Rollen sind hierarchisch (`App\Security\Role`, Rang-Vergleich). Regeln der
+Benutzerverwaltung (`AppUserService`):
+
+- Ein Administrator kann nur Rollen bis einschließlich `admin` vergeben und
+  keine `sysadmin`-Konten bearbeiten, deaktivieren oder löschen.
+- Niemand kann die eigene Rolle ändern, sich selbst deaktivieren oder löschen.
+- Das Standard-Administratorkonto ist vor Löschung/Herabstufung geschützt.
 
 ## Systemgeheimnisse
 
@@ -51,6 +72,21 @@ und CSRF (`ApiController::requireCsrf()`). Webseiten prüfen über
 
 - Alle Ausgaben in Views laufen über den HTML-Escape-Helfer `e()`.
 - JSON-Attribute werden über `json_attr()` korrekt enkodiert.
+- Clientseitig erzeugtes HTML maskiert Werte über `UAM.esc()`; Benutzerdaten
+  werden nicht mehr in Inline-Event-Handler (`onclick`) eingebettet, sondern
+  über `data-*`-Attribute übergeben.
+- `LIKE`-Suchen maskieren `%`, `_` und `\` (`CatalogRepository::escapeLike`).
+
+## CSV-Export
+
+- Zellen, die mit `=`, `+`, `-`, `@`, Tab oder CR beginnen, werden mit `'`
+  präfixiert (Schutz vor Formel-Injection in Excel/LibreOffice).
+- Antworten werden mit `Cache-Control: no-store` ausgeliefert.
+
+## Datei-Uploads
+
+- Nur echte Uploads (`is_uploaded_file`) werden akzeptiert, mit
+  Größenlimit (`BaseController::readUpload()`).
 
 ## Kryptographie
 
@@ -63,7 +99,8 @@ und CSRF (`ApiController::requireCsrf()`). Webseiten prüfen über
 ## Brute-Force-Schutz
 
 - `login_attempts`-Tabelle, Sperre nach 5 Fehlversuchen je Identifikator
-  innerhalb von 15 Minuten (`Auth\RateLimiter`).
+  sowie nach 20 Fehlversuchen je IP-Adresse (Password-Spraying) innerhalb von
+  15 Minuten (`Auth\RateLimiter`).
 
 ## Backup & Wiederherstellung
 
@@ -73,8 +110,9 @@ und CSRF (`ApiController::requireCsrf()`). Webseiten prüfen über
   exportiert und bleiben damit an das `APP_SECRET` der erzeugenden
   Installation gebunden.
 - Zugriff auf Backup, Download und Wiederherstellung erfordert die Rolle
-  `admin` (bzw. `sysadmin`); alle mutierenden Aktionen sind CSRF-geschützt
-  und werden im Audit-Log protokolliert.
+  `sysadmin` (ein Backup enthält alle Passwort-Hashes; eine Wiederherstellung
+  könnte sonst zur Rechteausweitung genutzt werden); alle mutierenden Aktionen
+  sind CSRF-geschützt und werden im Audit-Log protokolliert.
 - Die Wiederherstellung ersetzt die abgedeckten Tabellen vollständig und
   erhält das Benutzerkonto des ausführenden Administrators, damit sich
   niemand aussperren kann.
@@ -88,8 +126,13 @@ und CSRF (`ApiController::requireCsrf()`). Webseiten prüfen über
 
 ## Sicherheits-Header
 
-Nginx setzt `X-Content-Type-Options: nosniff`, `X-Frame-Options: SAMEORIGIN`
-und `Referrer-Policy: strict-origin-when-cross-origin`.
+Nginx setzt `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,
+`Referrer-Policy: strict-origin-when-cross-origin`, eine
+`Content-Security-Policy` (`default-src 'self'`, `frame-ancestors 'none'`,
+`form-action 'self'`), `Permissions-Policy` und
+`Cross-Origin-Opener-Policy`; `server_tokens` ist deaktiviert.
+HSTS ist vorbereitet, aber auskommentiert, solange das selbstsignierte
+Notfall-Zertifikat verwendet wird.
 
 ## Bekannte Einschränkungen
 

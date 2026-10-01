@@ -2,6 +2,13 @@
 (function () {
     'use strict';
 
+    // Single HTML-escaping helper (was duplicated in several views).
+    function esc(value) {
+        return String(value === undefined || value === null ? '' : value).replace(/[&<>"']/g, function (c) {
+            return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+        });
+    }
+
     function csrf() {
         const meta = document.querySelector('meta[name="csrf-token"]');
         return meta ? meta.content : '';
@@ -16,7 +23,7 @@
             opts.headers['Content-Type'] = 'application/json';
             opts.body = JSON.stringify(body);
         }
-        const res = await fetch(url, opts);
+        const res = await fetch(url, Object.assign(opts, { credentials: 'same-origin' }));
         let data = null;
         try { data = await res.json(); } catch (e) { /* no body */ }
         if (!res.ok) {
@@ -32,30 +39,62 @@
         if (!root) { alert(message); return; }
         const el = document.createElement('div');
         el.className = 'toast toast-' + type;
+        // Errors are announced assertively for screen readers.
+        if (type === 'error') { el.setAttribute('role', 'alert'); }
         el.textContent = message;
         root.appendChild(el);
-        setTimeout(() => el.remove(), 4000);
+        setTimeout(() => el.remove(), type === 'error' ? 8000 : 4000);
     }
 
+    let modalSeq = 0;
+
+    // Accessible dialog: labelled title, Escape to close, focus moved into
+    // the dialog, Tab kept inside and focus restored on close.
     function modal(title, bodyHTML, options) {
         options = options || {};
         const root = document.getElementById('modal-root');
         root.innerHTML = '';
+        const previousFocus = document.activeElement;
+        const titleId = 'modal-title-' + (++modalSeq);
         const backdrop = document.createElement('div');
         backdrop.className = 'modal-backdrop';
         backdrop.innerHTML =
-            '<div class="modal" role="dialog" aria-modal="true">' +
-            '  <div class="modal-head"><span></span><button type="button" class="modal-close" aria-label="Schließen">&times;</button></div>' +
+            '<div class="modal" role="dialog" aria-modal="true" aria-labelledby="' + titleId + '">' +
+            '  <div class="modal-head"><h2 class="modal-title" id="' + titleId + '"></h2><button type="button" class="modal-close" aria-label="Schließen">&times;</button></div>' +
             '  <div class="modal-body"></div>' +
             '</div>';
-        backdrop.querySelector('.modal-head span').textContent = title;
+        backdrop.querySelector('.modal-title').textContent = title;
         backdrop.querySelector('.modal-body').innerHTML = bodyHTML;
-        const close = () => backdrop.remove();
+        const dialog = backdrop.querySelector('.modal');
+
+        function focusable() {
+            return Array.from(dialog.querySelectorAll('a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'));
+        }
+        function onKey(e) {
+            if (e.key === 'Escape') { e.preventDefault(); close(); return; }
+            if (e.key !== 'Tab') { return; }
+            const items = focusable();
+            if (!items.length) { return; }
+            const first = items[0];
+            const last = items[items.length - 1];
+            if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+            else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+        }
+        function close() {
+            document.removeEventListener('keydown', onKey);
+            backdrop.remove();
+            if (previousFocus && typeof previousFocus.focus === 'function') { previousFocus.focus(); }
+        }
+
         backdrop.querySelector('.modal-close').addEventListener('click', close);
         backdrop.addEventListener('click', (e) => { if (e.target === backdrop) close(); });
+        document.addEventListener('keydown', onKey);
         root.appendChild(backdrop);
-        if (options.onMount) { options.onMount(backdrop.querySelector('.modal'), close); }
-        return { close: close, el: backdrop.querySelector('.modal') };
+        const items = focusable();
+        const firstField = items.find(el => !el.classList.contains('modal-close'));
+        (firstField || items[0] || dialog).focus();
+        if (options.onMount) { options.onMount(dialog, close); }
+        return { close: close, el: dialog };
     }
 
     function serialize(form) {
@@ -119,9 +158,7 @@
         const submitBtn = form.querySelector('button[type="submit"]');
         if (submitBtn) { submitBtn.disabled = true; }
         try {
-            const body = formObject(form);
-            if (typeof form.dataset.beforeSubmit === 'function') { /* placeholder */ }
-            await api(method, url, body);
+            await api(method, url, formObject(form));
             toast('Gespeichert.');
             if (form.dataset.reload !== 'false') { window.location.reload(); }
         } catch (err) {
@@ -157,11 +194,15 @@
         }
     });
 
-    // Auto-dismiss flash messages.
+    // Flash messages: success messages fade out, errors stay until closed
+    // (UX FIX: error messages used to disappear after 6 s).
     window.addEventListener('DOMContentLoaded', () => {
         const flash = document.getElementById('flash');
-        if (flash) { setTimeout(() => { flash.style.display = 'none'; }, 6000); }
+        if (!flash) { return; }
+        const closeBtn = flash.querySelector('.flash-close');
+        if (closeBtn) { closeBtn.addEventListener('click', () => flash.remove()); }
+        if (flash.dataset.autohide === 'true') { setTimeout(() => flash.remove(), 6000); }
     });
 
-    window.UAM = { api: api, toast: toast, modal: modal, serialize: serialize, formObject: formObject, csrf: csrf };
+    window.UAM = { api: api, toast: toast, modal: modal, serialize: serialize, formObject: formObject, csrf: csrf, esc: esc };
 })();

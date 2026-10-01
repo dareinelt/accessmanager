@@ -3,8 +3,8 @@
 /** @var array $connections */
 /** @var array $doors */
 /** @var int|null $selectedConnection */
-$role = $currentUser['role'] ?? 'readonly';
-$canManage = in_array($role, ['admin', 'operator'], true);
+// FIX: role check by rank (sysadmin previously lost these controls).
+$canManage = \App\Security\Auth::hasRole(\App\Security\Auth::ROLE_OPERATOR);
 $connNames = array_column($connections, 'name', 'id');
 ?>
 <div class="page-head">
@@ -65,7 +65,7 @@ $connNames = array_column($connections, 'name', 'id');
 <?php if ($canManage): ?>
 <script>
 const GROUP_CONNECTIONS = <?= json_attr($connections) ?>;
-const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const esc = UAM.esc;
 
 async function loadDoorChecks(container, cid, selectedIds) {
     container.innerHTML = '<span class="muted">Türen werden geladen …</span>';

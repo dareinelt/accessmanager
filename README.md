@@ -84,7 +84,7 @@ vollständige Referenz steht in `.env.example`. Wichtig:
 
 ## Backup & Wiederherstellung
 
-Unter **Backup & Wiederherstellung** (Admin-Rolle) lassen sich alle
+Unter **Backup & Wiederherstellung** (Rolle Systemadministrator) lassen sich alle
 konfigurierbaren Daten sichern und wiederherstellen:
 
 - **Sofort-Backup** lädt ein vollständiges JSON-Archiv als Download herunter

@@ -16,25 +16,38 @@ final class Session
             return;
         }
 
-        $name = (string) Config::get('SESSION_NAME', 'uam_session');
-        session_name($name);
+        // SECURITY FIX: strict mode rejects attacker-supplied (uninitialised)
+        // session IDs; cookies are the only accepted transport.
+        ini_set('session.use_strict_mode', '1');
+        ini_set('session.use_only_cookies', '1');
+        ini_set('session.use_trans_sid', '0');
+        ini_set('session.gc_maxlifetime', (string) self::idleTimeout());
+
+        session_name((string) Config::get('SESSION_NAME', 'uam_session'));
         session_set_cookie_params([
-            'lifetime' => Config::int('SESSION_LIFETIME', 1440),
+            // FIX: the cookie used to expire SESSION_LIFETIME seconds after
+            // login regardless of activity. It is now a browser-session cookie;
+            // inactivity is enforced server-side (see Auth::check()).
+            'lifetime' => 0,
             'path' => '/',
             'httponly' => true,
             'samesite' => 'Lax',
-            'secure' => self::isSecureRequest(),
+            'secure' => Request::isSecure($_SERVER),
         ]);
         session_start();
         self::$started = true;
     }
 
+    /** Inactivity timeout in seconds (SESSION_LIFETIME, minimum 5 minutes). */
+    public static function idleTimeout(): int
+    {
+        return max(300, Config::int('SESSION_LIFETIME', 1440));
+    }
+
     public static function regenerate(bool $destroy = false): void
     {
-        if ($destroy) {
-            session_regenerate_id(true);
-        } else {
-            session_regenerate_id();
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            session_regenerate_id($destroy);
         }
     }
 
@@ -53,21 +66,51 @@ final class Session
         unset($_SESSION[$key]);
     }
 
+    /** Store a one-time message shown on the next rendered page. */
+    public static function flash(string $type, string $message): void
+    {
+        $_SESSION['flash'] = ['type' => $type, 'message' => $message];
+    }
+
+    /** @return array{type:string,message:string}|null */
+    public static function pullFlash(): ?array
+    {
+        $flash = $_SESSION['flash'] ?? null;
+        unset($_SESSION['flash']);
+        return is_array($flash) ? $flash : null;
+    }
+
     public static function destroy(): void
     {
         $_SESSION = [];
+        if (session_status() !== PHP_SESSION_ACTIVE) {
+            return;
+        }
         if (ini_get('session.use_cookies')) {
             $p = session_get_cookie_params();
-            setcookie(session_name(), '', time() - 42000, $p['path'], $p['domain'], $p['secure'], $p['httponly']);
+            setcookie(session_name(), '', [
+                'expires' => time() - 42000,
+                'path' => $p['path'],
+                'domain' => $p['domain'],
+                'secure' => $p['secure'],
+                'httponly' => $p['httponly'],
+                'samesite' => $p['samesite'] ?? 'Lax',
+            ]);
         }
         session_destroy();
         self::$started = false;
     }
 
-    private static function isSecureRequest(): bool
+    /**
+     * Destroy the current session and immediately start a fresh, empty one
+     * (e.g. to carry a flash message to the login page after a logout).
+     */
+    public static function restart(): void
     {
-        $https = $_SERVER['HTTPS'] ?? '';
-        $proto = $_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '';
-        return (!empty($https) && $https !== 'off') || $proto === 'https';
+        self::destroy();
+        if (PHP_SAPI !== 'cli') {
+            self::start();
+            session_regenerate_id(true);
+        }
     }
 }

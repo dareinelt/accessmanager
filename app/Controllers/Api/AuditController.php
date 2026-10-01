@@ -12,9 +12,9 @@ final class AuditController extends ApiController
     public function list(Request $request): never
     {
         $this->authorize($request, \App\Security\Auth::ROLE_ADMIN);
-        $page = max(1, (int) $request->query('page', 1));
-        $pageSize = min(100, max(1, (int) $request->query('page_size', 25)));
-        $filter = (string) $request->query('search', '');
+        $page = $request->queryInt('page') ?? 1;
+        $pageSize = min(100, $request->queryInt('page_size') ?? 25);
+        $filter = (string) $request->queryString('search');
         $this->run(fn () => App::auditRepository()->list($page, $pageSize, $filter !== '' ? $filter : null));
     }
 }

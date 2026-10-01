@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Repositories;
 
 use App\Core\Database;
+use App\Security\Auth;
 use PDO;
 
 final class AppUserRepository
@@ -42,7 +43,7 @@ final class AppUserRepository
         $stmt->execute([
             'u' => $username,
             'e' => $email,
-            'p' => password_hash($password, PASSWORD_DEFAULT),
+            'p' => Auth::hashPassword($password),
             'r' => $role,
         ]);
         return (int) $pdo->lastInsertId();
@@ -60,7 +61,7 @@ final class AppUserRepository
         }
         if (!empty($data['password'])) {
             $fields[] = 'password_hash = :password_hash';
-            $params['password_hash'] = password_hash((string) $data['password'], PASSWORD_DEFAULT);
+            $params['password_hash'] = Auth::hashPassword((string) $data['password']);
         }
         if (array_key_exists('is_active', $data)) {
             $fields[] = 'is_active = :is_active';

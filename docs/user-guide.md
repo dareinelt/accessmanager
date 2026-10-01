@@ -39,8 +39,8 @@ unterschiedliche Menüpunkte und Aktionen sichtbar:
 
 | Rolle | Berechtigungen |
 |-------|----------------|
-| **Systemadministrator** (`sysadmin`) | Alle Funktionen, zusätzlich **Systemgeheimnisse**. |
-| **Administrator** (`admin`) | Alle Verwaltungsfunktionen: Standorte, Audit-Log, Benutzer, Einstellungen, Backup, Zertifikate. |
+| **Systemadministrator** (`sysadmin`) | Alle Funktionen, zusätzlich **Systemgeheimnisse** sowie **Backup & Wiederherstellung**. |
+| **Administrator** (`admin`) | Verwaltungsfunktionen: Standorte, Audit-Log, Benutzer (bis zur Rolle Administrator), Einstellungen, Zertifikate. |
 | **Operator** (`operator`) | Personen/Karten/Gruppen/Türen verwalten, Synchronisation ausführen, AD-Mappings pflegen. |
 | **Nur Lesen** (`readonly`) | Lesezugriff auf Dashboard, Personen, Karten, Gruppen, Türen. |
 

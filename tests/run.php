@@ -14,7 +14,9 @@ declare(strict_types=1);
 require dirname(__DIR__) . '/app/bootstrap.php';
 
 use App\Config\Config;
+use App\Controllers\ExportController;
 use App\Core\App;
+use App\Core\Request;
 use App\Repositories\AdGroupMappingRepository;
 use App\Repositories\AppUserRepository;
 use App\Repositories\BackupRepository;
@@ -26,8 +28,10 @@ use App\Repositories\TlsCertificateRepository;
 use App\Security\Auth;
 use App\Security\Crypto;
 use App\Security\Csrf;
+use App\Security\Role;
 use App\Services\AdSyncService;
 use App\Services\Ldap\MockLdapClient;
+use App\Services\PersonService;
 
 $tests = [];
 $passed = 0;
@@ -503,6 +507,132 @@ test('AdSyncService::run liefert eine Zusammenfassung (Mock-LDAP)', function () 
     assertTrue($summary['users_fetched'] > 0, 'Mock-LDAP sollte Benutzer liefern');
     assertTrue(is_array($summary['errors']), 'errors sollte ein Array sein');
     assertTrue(in_array($summary['status'], ['success', 'partial', 'error'], true), 'status sollte gültig sein');
+});
+
+// ---------------------------------------------------------------------
+// 12. Security-Hardening (Audit)
+// ---------------------------------------------------------------------
+echo "\n[12] Security-Hardening\n";
+
+test('Role-Enum: Rangfolge und Auth::hasRole', function () {
+    assertTrue(Role::Sysadmin->satisfies(Role::Admin), 'sysadmin erfüllt admin');
+    assertTrue(!Role::Operator->satisfies(Role::Admin), 'operator erfüllt admin nicht');
+    $_SESSION['role'] = 'sysadmin';
+    assertTrue(Auth::hasRole(Auth::ROLE_OPERATOR), 'sysadmin darf Operator-Funktionen nutzen');
+    $_SESSION['role'] = 'readonly';
+    assertTrue(!Auth::hasRole(Auth::ROLE_OPERATOR), 'readonly darf keine Operator-Funktionen nutzen');
+    unset($_SESSION['role']);
+});
+
+test('Auth::hashPassword erzeugt Argon2id/Bcrypt-Hash', function () {
+    $hash = Auth::hashPassword('Sehr-Geheim-123');
+    assertTrue(password_verify('Sehr-Geheim-123', $hash), 'Hash muss verifizierbar sein');
+    assertTrue(str_starts_with($hash, '$argon2id$') || str_starts_with($hash, '$2y$'), 'Argon2id oder Bcrypt erwartet');
+});
+
+test('AppUserService verhindert Rechteausweitung durch Admins', function () {
+    $svc = App::appUsers();
+    $suffix = bin2hex(random_bytes(3));
+    $expectFail = function (callable $fn, string $msg): void {
+        try {
+            $fn();
+        } catch (InvalidArgumentException) {
+            return;
+        }
+        throw new RuntimeException($msg);
+    };
+
+    $expectFail(fn () => $svc->create(['username' => 'esc_' . $suffix, 'email' => "esc_{$suffix}@example.test", 'password' => 'Passwort-1234', 'role' => 'sysadmin'], 1, 'admin', Role::Admin),
+        'Admin darf keinen Sysadmin anlegen');
+
+    $sys = $svc->create(['username' => 'sys_' . $suffix, 'email' => "sys_{$suffix}@example.test", 'password' => 'Passwort-1234', 'role' => 'sysadmin'], null, null, Role::Sysadmin);
+    $adm = $svc->create(['username' => 'adm_' . $suffix, 'email' => "adm_{$suffix}@example.test", 'password' => 'Passwort-1234', 'role' => 'admin'], null, null, Role::Sysadmin);
+    $sysId = (int) $sys['id'];
+    $admId = (int) $adm['id'];
+
+    try {
+        $expectFail(fn () => $svc->update($sysId, ['password' => 'Neues-Passwort-99'], $admId, 'adm', Role::Admin), 'Admin darf Sysadmin-Passwort nicht ändern');
+        $expectFail(fn () => $svc->delete($sysId, $admId, 'adm', Role::Admin), 'Admin darf Sysadmin nicht löschen');
+        $expectFail(fn () => $svc->update($admId, ['role' => 'sysadmin'], $sysId, 'sys', Role::Admin), 'Admin darf niemanden zum Sysadmin befördern');
+        $expectFail(fn () => $svc->update($admId, ['role' => 'readonly'], $admId, 'adm', Role::Admin), 'Eigene Rolle darf nicht geändert werden');
+        $expectFail(fn () => $svc->update($admId, ['is_active' => false], $admId, 'adm', Role::Admin), 'Eigenes Konto darf nicht deaktiviert werden');
+        $expectFail(fn () => $svc->update($admId, ['email' => 'kein-mail'], $sysId, 'sys', Role::Sysadmin), 'Ungültige E-Mail muss abgelehnt werden');
+        $expectFail(fn () => $svc->create(['username' => 'adm_' . $suffix, 'email' => "x_{$suffix}@example.test", 'password' => 'Passwort-1234', 'role' => 'readonly'], null, null, Role::Sysadmin),
+            'Doppelter Benutzername muss als Validierungsfehler gemeldet werden');
+
+        $svc->update($admId, ['role' => 'operator'], $sysId, 'sys', Role::Sysadmin);
+        assertSame('operator', (new AppUserRepository())->find($admId)['role'], 'Sysadmin darf Rollen ändern');
+    } finally {
+        $svc->delete($admId, null, null, null);
+        $svc->delete($sysId, null, null, null);
+    }
+});
+
+test('Standard-Administrator ist nicht löschbar', function () {
+    $admin = (new AppUserRepository())->findByUsername((string) Config::get('ADMIN_USERNAME', 'admin'));
+    assertTrue($admin !== null, 'Standard-Admin sollte existieren (seed)');
+    try {
+        App::appUsers()->delete((int) $admin['id'], null, null, Role::Sysadmin);
+    } catch (InvalidArgumentException) {
+        return;
+    }
+    throw new RuntimeException('Standard-Admin wurde gelöscht');
+});
+
+test('Request::queryInt / queryString normalisieren Filter', function () {
+    $backup = $_GET;
+    try {
+        $_GET = ['a' => '', 'b' => '7', 'c' => 'abc', 'd' => '0', 'e' => ['x'], 'f' => '  text '];
+        $r = new Request();
+        assertSame(null, $r->queryInt('a'), '"Alle Standorte" (leer) muss null sein');
+        assertSame(7, $r->queryInt('b'));
+        assertSame(null, $r->queryInt('c'));
+        assertSame(null, $r->queryInt('d'));
+        assertSame(null, $r->queryString('e'), 'Arrays werden verworfen');
+        assertSame('text', $r->queryString('f'));
+    } finally {
+        $_GET = $backup;
+    }
+});
+
+test('Request::clientIp ignoriert X-Forwarded-For ohne Trusted Proxy', function () {
+    $ip = Request::clientIp(['REMOTE_ADDR' => '10.0.0.5', 'HTTP_X_FORWARDED_FOR' => '1.2.3.4']);
+    assertSame('10.0.0.5', $ip, 'Gefälschter XFF-Header darf nicht übernommen werden');
+});
+
+test('CSV-Export neutralisiert Formeln', function () {
+    assertSame("'=HYPERLINK(\"x\")", ExportController::csvCell('=HYPERLINK("x")'));
+    assertSame("'+1", ExportController::csvCell('+1'));
+    assertSame("'@SUM(A1)", ExportController::csvCell('@SUM(A1)'));
+    assertSame('Max Mustermann', ExportController::csvCell('Max Mustermann'));
+    assertSame('', ExportController::csvCell(null));
+});
+
+test('LIKE-Platzhalter werden maskiert', function () {
+    assertSame('100\\%\\_a\\\\b', CatalogRepository::escapeLike('100%_a\\b'));
+});
+
+test('RateLimiter sperrt pro IP-Adresse', function () {
+    $ip = '198.51.100.' . random_int(1, 254);
+    $ids = [];
+    for ($i = 0; $i < 20; $i++) {
+        $ids[] = $id = 'spray_' . bin2hex(random_bytes(4));
+        \App\Auth\RateLimiter::record($id, $ip, false);
+    }
+    try {
+        assertTrue(\App\Auth\RateLimiter::tooManyAttemptsFromIp($ip), 'Nach 20 Fehlversuchen von einer IP sollte gesperrt werden');
+    } finally {
+        foreach ($ids as $id) {
+            \App\Auth\RateLimiter::clear($id);
+        }
+    }
+});
+
+test('PersonService::redactForReadonly entfernt PIN/Rohdaten', function () {
+    $detail = ['person' => ['full_name' => 'X', 'raw_json' => '{"pin_code":"1234"}'], 'raw' => ['pin_code' => '1234']];
+    $red = PersonService::redactForReadonly($detail);
+    assertSame([], $red['raw']);
+    assertTrue(!isset($red['person']['raw_json']), 'raw_json muss entfernt werden');
 });
 
 // ---------------------------------------------------------------------

@@ -11,12 +11,19 @@ use App\Security\Auth;
 
 final class SettingsController extends ApiController
 {
+    /** Editable keys: type + allowed range (ints) */
     private const EDITABLE = [
-        'sync_interval_minutes',
-        'sync_enabled',
-        'backup_enabled',
-        'backup_interval_minutes',
-        'backup_retention',
+        'sync_interval_minutes' => ['int', 1, 10080],
+        'sync_enabled' => ['bool'],
+        'backup_enabled' => ['bool'],
+        'backup_interval_minutes' => ['int', 5, 525600],
+        'backup_retention' => ['int', 0, 1000],
+    ];
+
+    private const LABELS = [
+        'sync_interval_minutes' => 'Sync-Intervall (Minuten)',
+        'backup_interval_minutes' => 'Backup-Intervall (Minuten)',
+        'backup_retention' => 'Anzahl aufzubewahrender Backups',
     ];
 
     public function show(Request $request): never
@@ -39,15 +46,33 @@ final class SettingsController extends ApiController
         [$userId, $username] = $this->actor();
         $data = $request->all();
         $this->run(function () use ($data, $userId, $username) {
-            $settings = App::settings();
-            foreach ($data as $key => $value) {
-                if (!in_array($key, self::EDITABLE, true)) {
-                    continue;
+            // SECURITY/FUNCTION FIX: values were stored unvalidated (e.g. negative
+            // or non-numeric intervals, arbitrary strings for booleans).
+            $clean = [];
+            foreach (self::EDITABLE as $key => $rule) {
+                if (array_key_exists($key, $data)) {
+                    $clean[$key] = $this->normalize($key, $data[$key], $rule);
                 }
-                $settings->set($key, is_scalar($value) ? (string) $value : null);
             }
-            App::audit()->log('settings.update', 'settings', null, null, $data, null, $userId, $username);
+            $settings = App::settings();
+            foreach ($clean as $key => $value) {
+                $settings->set($key, $value);
+            }
+            App::audit()->log('settings.update', 'settings', null, null, $clean, null, $userId, $username);
             return ['settings' => App::settings()->all()];
         });
+    }
+
+    /** @param array{0:string,1?:int,2?:int} $rule */
+    private function normalize(string $key, mixed $value, array $rule): string
+    {
+        if ($rule[0] === 'bool') {
+            return filter_var($value, FILTER_VALIDATE_BOOLEAN) ? '1' : '0';
+        }
+        $int = filter_var($value, FILTER_VALIDATE_INT, ['options' => ['min_range' => $rule[1], 'max_range' => $rule[2]]]);
+        if ($int === false) {
+            throw new \InvalidArgumentException(sprintf('%s: bitte eine ganze Zahl zwischen %d und %d angeben.', self::LABELS[$key] ?? $key, $rule[1], $rule[2]));
+        }
+        return (string) $int;
     }
 }

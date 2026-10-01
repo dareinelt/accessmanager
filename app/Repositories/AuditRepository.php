@@ -18,15 +18,21 @@ final class AuditRepository
         );
         $stmt->execute([
             'uid' => $userId,
-            'uname' => $username,
-            'action' => $action,
-            'etype' => $entityType,
-            'eid' => $entityId,
-            'elabel' => $entityLabel,
-            'result' => $result,
-            'ip' => $ip,
-            'details' => $details ? json_encode($details, JSON_UNESCAPED_UNICODE) : null,
+            'uname' => self::clip($username, 64),
+            'action' => (string) self::clip($action, 128),
+            'etype' => self::clip($entityType, 64),
+            'eid' => self::clip($entityId, 128),
+            'elabel' => self::clip($entityLabel, 255),
+            'result' => (string) self::clip($result, 16),
+            'ip' => self::clip($ip, 45),
+            'details' => $details ? json_encode($details, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE) : null,
         ]);
+    }
+
+    /** FIX: values longer than the column caused "Data too long" (HTTP 500). */
+    private static function clip(?string $value, int $length): ?string
+    {
+        return $value === null ? null : mb_substr($value, 0, $length);
     }
 
     /** @return array{items:array<int,array<string,mixed>>,total:int} */
@@ -36,7 +42,7 @@ final class AuditRepository
         $where = '';
         $params = [];
         if ($filter !== null && $filter !== '') {
-            $like = '%' . $filter . '%';
+            $like = '%' . CatalogRepository::escapeLike($filter) . '%';
             $where = 'WHERE (action LIKE :f1 OR entity_label LIKE :f2 OR username LIKE :f3)';
             $params['f1'] = $like;
             $params['f2'] = $like;

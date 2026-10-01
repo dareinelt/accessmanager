@@ -121,8 +121,10 @@ $router->post('/api/ad/sync', 'App\Controllers\Api\AdMappingController@sync');
 try {
     $router->dispatch(new Request());
 } catch (Throwable $e) {
-    Logger::error('router', $e->getMessage());
-    if (str_starts_with((new Request())->path(), '/api/')) {
+    // FIX: log file/line + class for diagnosis; do not re-parse the request body.
+    Logger::error('router', get_class($e) . ': ' . $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
+    $path = (string) parse_url((string) ($_SERVER['REQUEST_URI'] ?? '/'), PHP_URL_PATH);
+    if (str_starts_with($path, '/api/')) {
         Response::error('Unerwarteter Serverfehler', 'SERVER_ERROR', 500);
     }
     http_response_code(500);
