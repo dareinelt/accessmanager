@@ -13,6 +13,7 @@ declare(strict_types=1);
 
 require dirname(__DIR__) . '/app/bootstrap.php';
 
+use App\Api\UniFiApiClient;
 use App\Config\Config;
 use App\Controllers\ExportController;
 use App\Core\App;
@@ -30,7 +31,9 @@ use App\Security\Crypto;
 use App\Security\Csrf;
 use App\Security\Role;
 use App\Services\AdSyncService;
+use App\Services\Ldap\LdapClientFactory;
 use App\Services\Ldap\MockLdapClient;
+use App\Services\Ldap\UnavailableLdapClient;
 use App\Services\PersonService;
 
 $tests = [];
@@ -507,6 +510,124 @@ test('AdSyncService::run liefert eine Zusammenfassung (Mock-LDAP)', function () 
     assertTrue($summary['users_fetched'] > 0, 'Mock-LDAP sollte Benutzer liefern');
     assertTrue(is_array($summary['errors']), 'errors sollte ein Array sein');
     assertTrue(in_array($summary['status'], ['success', 'partial', 'error'], true), 'status sollte gültig sein');
+});
+
+$adSync = static fn (array $users, ?int $limit = null): AdSyncService => new AdSyncService(
+    new MockLdapClient($users),
+    new AdGroupMappingRepository(),
+    new CatalogRepository(),
+    new CacheRepository(),
+    new ConnectionRepository(),
+    App::persons(),
+    App::audit(),
+    $limit,
+);
+
+test('LdapClientFactory: kein Mock gegen echte Controller, kein stiller Mock-Fallback', function () {
+    assertTrue(LdapClientFactory::refusalReason(true, false, true) !== null, 'LDAP_MOCK + echter Controller muss abgelehnt werden');
+    assertTrue(LdapClientFactory::refusalReason(false, false, false) !== null, 'Fehlendes ext-ldap darf nicht still auf Mock wechseln');
+    assertTrue(LdapClientFactory::refusalReason(false, true, false) !== null, 'Fehlendes ext-ldap auch im UniFi-Mock-Modus melden');
+    assertSame(null, LdapClientFactory::refusalReason(true, true, false), 'Mock+Mock ist erlaubt');
+    assertSame(null, LdapClientFactory::refusalReason(false, false, true), 'Echtes LDAP mit ext-ldap ist erlaubt');
+
+    $client = new UnavailableLdapClient('Grund');
+    try {
+        $client->getUsers();
+    } catch (RuntimeException $e) {
+        assertSame('Grund', $e->getMessage());
+        return;
+    }
+    throw new RuntimeException('UnavailableLdapClient muss beim Lesen scheitern');
+});
+
+test('UniFi-Client wiederholt POST nur, wenn die Anfrage nie gesendet wurde', function () {
+    assertTrue(UniFiApiClient::mayRetry('GET', 28, 120), 'GET darf wiederholt werden');
+    assertTrue(UniFiApiClient::mayRetry('PUT', 28, 120), 'PUT ist idempotent');
+    assertTrue(!UniFiApiClient::mayRetry('POST', 28, 120), 'POST nach Timeout darf nicht wiederholt werden');
+    assertTrue(!UniFiApiClient::mayRetry('POST', 56, 200), 'POST nach Verbindungsabbruch darf nicht wiederholt werden');
+    assertTrue(UniFiApiClient::mayRetry('POST', 7, 0), 'POST bei abgelehnter Verbindung ist sicher');
+    assertTrue(UniFiApiClient::mayRetry('POST', 28, 0), 'POST ohne gesendete Bytes ist sicher');
+});
+
+test('UniFi-Sync erhält AD-Metadaten und entfernt nur veraltete Zeilen', function () {
+    $cache = new CacheRepository();
+    $connectionId = (int) (new ConnectionRepository())->all()[0]['id'];
+    $person = $cache->personsForAdSync($connectionId)[0];
+    $unifiId = (string) $person['unifi_id'];
+    $cache->setUserAdMetadata($connectionId, $unifiId, 'S-TEST-KEEP', ['CN=X,DC=example,DC=com']);
+    $cache->upsertUser($connectionId, ['id' => 'stale-' . bin2hex(random_bytes(4)), 'first_name' => 'Veraltet']);
+    $before = $cache->countUsers($connectionId);
+
+    $result = App::sync()->syncAll();
+    assertSame(0, $result['failed'], 'Sync sollte erfolgreich sein');
+
+    $after = $cache->personForAdSync($connectionId, $unifiId);
+    assertSame('S-TEST-KEEP', $after['ad_identifier'] ?? null, 'ad_identifier muss den UniFi-Sync überleben');
+    assertSame($before - 1, $cache->countUsers($connectionId), 'Nur die veraltete Zeile darf entfernt werden');
+    $cache->setUserAdMetadata($connectionId, $unifiId, '', []);
+});
+
+test('AD-Sync legt keine Duplikate an, wenn der Cache hinterherhinkt', function () use ($adSync) {
+    $connectionId = (int) (new ConnectionRepository())->all()[0]['id'];
+    $suffix = bin2hex(random_bytes(4));
+    $email = "lag_{$suffix}@example.test";
+    $created = App::persons()->create($connectionId, ['first_name' => 'Cache', 'last_name' => 'Lag', 'user_email' => $email]);
+    $cache = new CacheRepository();
+    $cache->deleteUser($connectionId, (string) $created['id']);
+
+    $users = (new MockLdapClient())->getUsers();
+    $users[] = ['identifier' => 'S-LAG-' . $suffix, 'email' => $email, 'first_name' => 'Cache', 'last_name' => 'Lag', 'member_of' => [], 'enabled' => true];
+    $summary = $adSync($users)->run($connectionId);
+
+    assertSame(0, $summary['created'], 'Person existiert in UniFi bereits und darf nicht erneut angelegt werden');
+    $person = $cache->personForAdSync($connectionId, (string) $created['id']);
+    assertSame('S-LAG-' . $suffix, $person['ad_identifier'] ?? null, 'Live gefundene Person sollte verknüpft werden');
+    App::persons()->delete($connectionId, (string) $created['id']);
+});
+
+test('AD-Sync entzieht Zugänge bei deaktiviertem/gelöschtem AD-Konto und reaktiviert', function () use ($adSync) {
+    $connectionId = (int) (new ConnectionRepository())->all()[0]['id'];
+    $cache = new CacheRepository();
+    $mappings = new AdGroupMappingRepository();
+    $suffix = bin2hex(random_bytes(4));
+    $groupId = (string) App::groups()->list($connectionId)[0]['unifi_id'];
+    $dn = "CN=UAM-Test-{$suffix},OU=Groups,DC=example,DC=com";
+    $mappingId = $mappings->create($connectionId, $dn, $groupId, 'Test');
+    $created = App::persons()->create($connectionId, ['first_name' => 'Off', 'last_name' => 'Boarding', 'user_email' => "off_{$suffix}@example.test"]);
+    $unifiId = (string) $created['id'];
+
+    $demo = (new MockLdapClient())->getUsers();
+    $me = ['identifier' => 'S-OFF-' . $suffix, 'email' => "off_{$suffix}@example.test", 'first_name' => 'Off', 'last_name' => 'Boarding', 'member_of' => [$dn], 'enabled' => true];
+    $policies = static fn (): array => json_decode((string) ($cache->personForAdSync($connectionId, $unifiId)['access_policy_ids_json'] ?? '[]'), true) ?: [];
+
+    try {
+        $adSync(array_merge($demo, [$me]))->run($connectionId);
+        assertTrue(in_array($groupId, $policies(), true), 'Gemappte Gruppe sollte vergeben sein');
+
+        // Konto deaktiviert, aber LDAP liefert sonst niemanden: Sicherheitsnetz greift.
+        $summary = $adSync([array_merge($me, ['enabled' => false])])->run($connectionId);
+        assertSame(0, $summary['revoked'], 'Bei leerer AD-Antwort darf nichts entzogen werden');
+        assertTrue(in_array($groupId, $policies(), true), 'Gruppe muss erhalten bleiben');
+
+        // Konto deaktiviert, übrige AD-Konten aktiv: Zugang wird entzogen.
+        $summary = $adSync(array_merge($demo, [array_merge($me, ['enabled' => false])]), 1)->run($connectionId);
+        assertSame(1, $summary['revoked'], 'Genau ein Zugang sollte entzogen werden');
+
+        $person = $cache->personForAdSync($connectionId, $unifiId);
+        assertSame('DEACTIVATED', $person['status'], 'Person sollte in UniFi deaktiviert sein');
+        assertTrue(!in_array($groupId, $policies(), true), 'Gemappte Gruppe sollte entzogen sein');
+        assertNotEmpty($person['ad_deactivated_at'], 'Deaktivierung durch AD-Sync sollte markiert sein');
+
+        $summary = $adSync(array_merge($demo, [$me]))->run($connectionId);
+        assertSame(1, $summary['reactivated'], 'Rückkehrendes AD-Konto sollte reaktiviert werden');
+        $person = $cache->personForAdSync($connectionId, $unifiId);
+        assertSame('ACTIVE', $person['status']);
+        assertSame(null, $person['ad_deactivated_at'], 'Markierung sollte entfernt sein');
+        assertTrue(in_array($groupId, $policies(), true), 'Gruppe sollte wieder vergeben sein');
+    } finally {
+        $mappings->delete($mappingId);
+        App::persons()->delete($connectionId, $unifiId);
+    }
 });
 
 // ---------------------------------------------------------------------

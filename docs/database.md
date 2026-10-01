@@ -3,8 +3,13 @@
 > Screenshots der Oberfläche und eine bebilderte Anleitung finden Sie in der
 > [Bedienungsanleitung](user-guide.md).
 
-Schema: `database/migrations/001_initial.sql`. Engine InnoDB, Zeichensatz
-`utf8mb4`. Die Migrationen sind idempotent (`CREATE TABLE IF NOT EXISTS`).
+Schema: `database/migrations/*.sql` (alphabetisch, bei jedem Start). Engine
+InnoDB, Zeichensatz `utf8mb4`. Unterstützt werden **MariaDB 10.6+** (Standard
+im Compose-Setup: 11.4) und **MySQL 8.0**. Die Migrationen sind idempotent:
+Tabellen über `CREATE TABLE IF NOT EXISTS`, nachträgliche Spalten/Indizes über
+eine Prüfung in `information_schema` (MySQL 8 kennt kein
+`ADD COLUMN IF NOT EXISTS`). Eine fehlschlagende Migration bricht
+`php bin/cli.php migrate` mit Exit-Code 1 und Fehlermeldung ab.
 
 ## Tabellen
 
@@ -30,6 +35,14 @@ Die Cache-Tabellen speichern den original UniFi-Identifier (`unifi_id` bzw.
 eindeutige Schlüssel kombiniert immer `connection_id` mit dem
 UniFi-Identifier, da derselbe Identifier auf verschiedenen Controllern
 auftreten kann.
+
+Der UniFi-Sync ersetzt den Cache eines Standorts in **einer Transaktion**:
+alle abgerufenen Datensätze werden per Upsert geschrieben, anschließend nur
+die in UniFi nicht mehr vorhandenen Zeilen gelöscht. Leser sehen nie einen
+halb gefüllten Cache, und die lokalen AD-Spalten von `unifi_users`
+(`ad_identifier`, `ad_member_of_json`, `ad_synced_at`, `ad_deactivated_at`)
+bleiben erhalten. `ad_deactivated_at` markiert Personen, die der AD-Sync
+wegen eines deaktivierten/gelöschten AD-Kontos deaktiviert hat.
 
 ## Fremdschlüssel
 

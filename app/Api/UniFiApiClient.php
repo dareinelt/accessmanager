@@ -226,13 +226,23 @@ final class UniFiApiClient implements UniFiApiClientInterface
             $response = curl_exec($ch);
             $errno = curl_errno($ch);
             $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $requestSize = (int) curl_getinfo($ch, CURLINFO_REQUEST_SIZE);
             curl_close($ch);
 
             if ($response === false) {
-                Logger::warning('unifi', "Network error (attempt {$attempt}): {$errno}");
-                if ($attempt <= $this->maxRetries) {
+                Logger::warning('unifi', "Network error (attempt {$attempt}): {$errno} for {$method} {$path}");
+                if (self::mayRetry($method, $errno, $requestSize) && $attempt <= $this->maxRetries) {
                     usleep(250000 * $attempt);
                     continue;
+                }
+                if (!self::isIdempotent($method) && !self::requestNotSent($errno, $requestSize)) {
+                    throw new UniFiApiException(
+                        'Die Verbindung zu UniFi wurde während der Anfrage unterbrochen. Es ist unklar, ob die Änderung ausgeführt wurde. '
+                        . 'Bitte synchronisieren Sie den Standort und prüfen Sie den Datenbestand, bevor Sie es erneut versuchen.',
+                        0,
+                        null,
+                        true,
+                    );
                 }
                 throw new UniFiApiException('Die Verbindung zu UniFi konnte nicht hergestellt werden. Bitte überprüfen Sie Host und Erreichbarkeit.');
             }
@@ -259,6 +269,28 @@ final class UniFiApiClient implements UniFiApiClientInterface
 
             return $decoded;
         }
+    }
+
+    /**
+     * Network errors are retried for idempotent methods only. POST (create)
+     * is retried solely when the request provably never left this host,
+     * otherwise a timeout after successful processing would create
+     * duplicate persons/groups in UniFi.
+     */
+    public static function mayRetry(string $method, int $errno, int $requestSize): bool
+    {
+        return self::isIdempotent($method) || self::requestNotSent($errno, $requestSize);
+    }
+
+    private static function isIdempotent(string $method): bool
+    {
+        return in_array(strtoupper($method), ['GET', 'PUT', 'DELETE'], true);
+    }
+
+    private static function requestNotSent(int $errno, int $requestSize): bool
+    {
+        // 5/6 = proxy/host not resolvable, 7 = connection refused.
+        return $requestSize === 0 || in_array($errno, [5, 6, 7], true);
     }
 
     private function friendlyError(int $httpCode, ?array $body): string

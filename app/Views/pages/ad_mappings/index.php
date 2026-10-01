@@ -293,6 +293,8 @@ async function runAdSync() {
             ['Neu angelegt', res.created],
             ['Karten zugewiesen', res.cards_assigned],
             ['Gruppen geändert', res.groups_changed],
+            ['Zugänge entzogen', res.revoked],
+            ['Reaktiviert', res.reactivated],
         ];
         let html = '<div class="sync-result">';
         lines.forEach(l => { html += '<div class="line"><span class="muted">' + esc(l[0]) + '</span><span>' + esc(String(l[1])) + '</span></div>'; });

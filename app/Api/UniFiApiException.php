@@ -14,8 +14,19 @@ class UniFiApiException extends \RuntimeException
         string $message,
         private readonly int $statusCode = 0,
         private readonly ?array $responseBody = null,
+        private readonly bool $outcomeUnknown = false,
     ) {
         parent::__construct($message);
+    }
+
+    /**
+     * True when a non-idempotent request (POST) failed after it may already
+     * have reached the controller – it must not be repeated blindly because
+     * that could create duplicates.
+     */
+    public function outcomeUnknown(): bool
+    {
+        return $this->outcomeUnknown;
     }
 
     public function statusCode(): int

@@ -38,4 +38,69 @@ final class Database
 
         return self::$pdo;
     }
+
+    /**
+     * Run $fn inside a transaction (committed on success, rolled back on any
+     * exception). Nested calls join the already running transaction.
+     *
+     * @template T
+     * @param callable():T $fn
+     * @return T
+     */
+    public static function transaction(callable $fn): mixed
+    {
+        $pdo = self::connection();
+        if ($pdo->inTransaction()) {
+            return $fn();
+        }
+
+        $pdo->beginTransaction();
+        try {
+            $result = $fn();
+            $pdo->commit();
+            return $result;
+        } catch (\Throwable $e) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            throw $e;
+        }
+    }
+
+    /**
+     * Acquire a named, server-wide advisory lock (MySQL/MariaDB GET_LOCK).
+     * The lock is bound to the DB session and released automatically when
+     * the process ends.
+     */
+    public static function acquireLock(string $name, int $timeoutSeconds = 0): bool
+    {
+        $stmt = self::connection()->prepare('SELECT GET_LOCK(:n, :t)');
+        $stmt->execute(['n' => $name, 't' => $timeoutSeconds]);
+        return (int) $stmt->fetchColumn() === 1;
+    }
+
+    public static function releaseLock(string $name): void
+    {
+        self::connection()->prepare('SELECT RELEASE_LOCK(:n)')->execute(['n' => $name]);
+    }
+
+    /**
+     * Run $fn while holding the named lock. Returns null without calling $fn
+     * when the lock could not be acquired within the timeout.
+     *
+     * @template T
+     * @param callable():T $fn
+     * @return T|null
+     */
+    public static function withLock(string $name, int $timeoutSeconds, callable $fn): mixed
+    {
+        if (!self::acquireLock($name, $timeoutSeconds)) {
+            return null;
+        }
+        try {
+            return $fn();
+        } finally {
+            self::releaseLock($name);
+        }
+    }
 }

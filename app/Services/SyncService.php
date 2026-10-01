@@ -7,6 +7,7 @@ namespace App\Services;
 use App\Api\ApiClientFactory;
 use App\Api\UniFiApiClientInterface;
 use App\Api\UniFiApiException;
+use App\Core\Database;
 use App\Core\Logger;
 use App\Repositories\CacheRepository;
 use App\Repositories\ConnectionRepository;
@@ -19,6 +20,7 @@ use App\Repositories\SyncLogRepository;
 final class SyncService
 {
     private const PAGE_SIZE = 100;
+    public const LOCK_TIMEOUT = 120;
 
     public function __construct(
         private readonly ConnectionRepository $connections,
@@ -67,31 +69,46 @@ final class SyncService
     public function syncConnection(array $connection): array
     {
         $connectionId = (int) $connection['id'];
+
+        $result = Database::withLock(
+            self::lockName($connectionId),
+            self::LOCK_TIMEOUT,
+            fn (): array => $this->syncConnectionLocked($connection),
+        );
+        if ($result === null) {
+            $message = 'Für diesen Standort läuft bereits eine Synchronisation. Bitte später erneut versuchen.';
+            Logger::warning('sync', "Sync skipped for {$connection['name']}: lock busy");
+            throw new UniFiApiException($message);
+        }
+
+        return $result;
+    }
+
+    /**
+     * Name of the per-connection advisory lock shared by the UniFi sync and
+     * the AD sync, so both never write the same connection concurrently.
+     */
+    public static function lockName(int $connectionId): string
+    {
+        return 'uam_connection_' . $connectionId;
+    }
+
+    /** @return array<string,mixed> */
+    private function syncConnectionLocked(array $connection): array
+    {
+        $connectionId = (int) $connection['id'];
         $client = ApiClientFactory::forConnection($connection);
 
         $logId = $this->syncLogs->start($connectionId);
 
         try {
-            $users = $this->fetchAll(fn (int $page) => $client->getUsers(['page_num' => $page, 'page_size' => self::PAGE_SIZE]));
-            $credentials = $this->fetchAll(fn (int $page) => $client->getCredentials(['page_num' => $page, 'page_size' => self::PAGE_SIZE]));
-            $groups = $this->fetchAll(fn (int $page) => $client->getAccessGroups(['page_num' => $page, 'page_size' => self::PAGE_SIZE]));
+            $users = self::fetchAllPages(fn (int $page) => $client->getUsers(['page_num' => $page, 'page_size' => self::PAGE_SIZE]));
+            $credentials = self::fetchAllPages(fn (int $page) => $client->getCredentials(['page_num' => $page, 'page_size' => self::PAGE_SIZE]));
+            $groups = self::fetchAllPages(fn (int $page) => $client->getAccessGroups(['page_num' => $page, 'page_size' => self::PAGE_SIZE]));
             $doors = $client->getDoors()['data'] ?? [];
 
-            // Replace the cache atomically: clear then re-insert.
-            $this->cache->clearConnection($connectionId);
-
-            foreach ($users as $user) {
-                $this->cache->upsertUser($connectionId, $user);
-            }
-            foreach ($credentials as $credential) {
-                $this->cache->upsertCredential($connectionId, $credential);
-            }
-            foreach ($groups as $group) {
-                $this->cache->upsertAccessGroup($connectionId, $group);
-            }
-            foreach ($doors as $door) {
-                $this->cache->upsertDoor($connectionId, $door);
-            }
+            // Transactional upsert + removal of stale rows (keeps AD metadata).
+            $this->cache->replaceConnection($connectionId, $users, $credentials, $groups, $doors);
 
             $stats = [
                 'users' => count($users),
@@ -126,7 +143,7 @@ final class SyncService
      * @param callable(int):array $fetcher
      * @return array<int,array<string,mixed>>
      */
-    private function fetchAll(callable $fetcher): array
+    public static function fetchAllPages(callable $fetcher): array
     {
         $all = [];
         $page = 1;

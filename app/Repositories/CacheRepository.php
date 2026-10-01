@@ -217,13 +217,111 @@ final class CacheRepository
         return (int) $stmt->fetchColumn();
     }
 
-    public function clearConnection(int $connectionId): void
+    /**
+     * Replace the cached state of one connection with a fresh UniFi snapshot
+     * in a single transaction: upsert every fetched row, then delete only the
+     * rows that no longer exist in UniFi. Readers never see a half-filled
+     * cache, a failure leaves the previous state untouched, and the local
+     * AD columns of unifi_users (ad_*) survive because upserts do not touch
+     * them.
+     *
+     * @param array<int,array<string,mixed>> $users
+     * @param array<int,array<string,mixed>> $credentials
+     * @param array<int,array<string,mixed>> $groups
+     * @param array<int,array<string,mixed>> $doors
+     * @return array<string,int> number of deleted (stale) rows per table
+     */
+    public function replaceConnection(int $connectionId, array $users, array $credentials, array $groups, array $doors): array
+    {
+        return Database::transaction(function () use ($connectionId, $users, $credentials, $groups, $doors): array {
+            $keep = ['users' => [], 'credentials' => [], 'groups' => [], 'doors' => []];
+
+            foreach ($users as $user) {
+                $this->upsertUser($connectionId, $user);
+                $keep['users'][] = (string) ($user['id'] ?? '');
+            }
+            foreach ($credentials as $credential) {
+                $this->upsertCredential($connectionId, $credential);
+                $keep['credentials'][] = (string) ($credential['token'] ?? '');
+            }
+            foreach ($groups as $group) {
+                $this->upsertAccessGroup($connectionId, $group);
+                $keep['groups'][] = (string) ($group['id'] ?? '');
+            }
+            foreach ($doors as $door) {
+                $this->upsertDoor($connectionId, $door);
+                $keep['doors'][] = (string) ($door['id'] ?? '');
+            }
+
+            return [
+                'users' => $this->deleteStale('unifi_users', 'unifi_id', $connectionId, $keep['users']),
+                'credentials' => $this->deleteStale('unifi_credentials', 'unifi_token', $connectionId, $keep['credentials']),
+                'access_groups' => $this->deleteStale('unifi_access_groups', 'unifi_id', $connectionId, $keep['groups']),
+                'doors' => $this->deleteStale('unifi_doors', 'unifi_id', $connectionId, $keep['doors']),
+            ];
+        });
+    }
+
+    /** @param array<int,string> $keep */
+    private function deleteStale(string $table, string $keyColumn, int $connectionId, array $keep): int
     {
         $pdo = Database::connection();
-        $tables = ['unifi_users', 'unifi_credentials', 'unifi_access_groups', 'unifi_doors'];
-        foreach ($tables as $table) {
-            $pdo->prepare("DELETE FROM {$table} WHERE connection_id = :c")->execute(['c' => $connectionId]);
+        $stmt = $pdo->prepare("SELECT {$keyColumn} FROM {$table} WHERE connection_id = :c");
+        $stmt->execute(['c' => $connectionId]);
+        $keepSet = array_flip($keep);
+
+        $delete = $pdo->prepare("DELETE FROM {$table} WHERE connection_id = :c AND {$keyColumn} = :k");
+        $deleted = 0;
+        foreach ($stmt->fetchAll(PDO::FETCH_COLUMN) as $key) {
+            if (!isset($keepSet[(string) $key])) {
+                $delete->execute(['c' => $connectionId, 'k' => (string) $key]);
+                $deleted++;
+            }
         }
+
+        return $deleted;
+    }
+
+    /**
+     * Cached persons of one connection including the local AD columns, as
+     * needed by the AD sync for matching and offboarding.
+     *
+     * @return array<int,array<string,mixed>>
+     */
+    public function personsForAdSync(int $connectionId): array
+    {
+        $stmt = Database::connection()->prepare(
+            'SELECT unifi_id, full_name, email, employee_number, status, access_policy_ids_json,
+                    ad_identifier, ad_deactivated_at
+             FROM unifi_users WHERE connection_id = :c'
+        );
+        $stmt->execute(['c' => $connectionId]);
+        return $stmt->fetchAll();
+    }
+
+    /** @return array<string,mixed>|null */
+    public function personForAdSync(int $connectionId, string $unifiId): ?array
+    {
+        $stmt = Database::connection()->prepare(
+            'SELECT unifi_id, full_name, email, employee_number, status, access_policy_ids_json,
+                    ad_identifier, ad_deactivated_at
+             FROM unifi_users WHERE connection_id = :c AND unifi_id = :u'
+        );
+        $stmt->execute(['c' => $connectionId, 'u' => $unifiId]);
+        return $stmt->fetch() ?: null;
+    }
+
+    /**
+     * Mark (or unmark) a person as deactivated by the AD sync. Only persons
+     * deactivated by the AD sync are re-activated automatically when their
+     * AD account returns.
+     */
+    public function setAdDeactivated(int $connectionId, string $unifiId, bool $deactivated): void
+    {
+        Database::connection()->prepare(
+            'UPDATE unifi_users SET ad_deactivated_at = ' . ($deactivated ? 'NOW()' : 'NULL') . '
+             WHERE connection_id = :c AND unifi_id = :u'
+        )->execute(['c' => $connectionId, 'u' => $unifiId]);
     }
 
     private function userParams(int $connectionId, array $user): array
